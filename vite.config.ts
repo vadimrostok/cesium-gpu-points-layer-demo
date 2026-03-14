@@ -4,7 +4,14 @@ import { viteStaticCopy } from 'vite-plugin-static-copy';
 const normalizeBase = (base: string): string => (base.endsWith('/') ? base : `${base}/`);
 
 export default defineConfig(({ mode }) => {
-  const base = normalizeBase(process.env.VITE_PAGES_BASE_PATH ?? (mode === 'production' ? '/cesium-gpu-points-layer-demo/' : '/'));
+  const envBase = process.env.VITE_PAGES_BASE_PATH?.trim();
+  const base = normalizeBase(
+    envBase
+      ? envBase
+      : mode === 'production'
+        ? '/cesium-gpu-points-layer-demo/'
+        : '/',
+  );
 
   return {
     base,
