@@ -92,6 +92,9 @@ git push origin main
 
 GitHub Actions workflow (`.github/workflows/gh-pages.yml`) uploads `dist/` and deploys it to Pages using
 `actions/upload-pages-artifact` + `actions/deploy-pages`.
+Before first deploy, enable Pages in repository settings:
+
+- Settings → Pages → Build and deployment → Source: `GitHub Actions`.
 
 ## Notes
 
