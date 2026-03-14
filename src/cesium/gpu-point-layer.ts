@@ -31,8 +31,8 @@ export interface BasePointRecord {
   id: string;
   longitude: number;
   latitude: number;
-  altitudeMeters: number;
-  headingRadians: number;
+  altitudeMeters?: number;
+  headingRadians?: number;
 }
 
 export interface PreparedPointRecord extends BasePointRecord {
@@ -233,7 +233,7 @@ export const isPointInVisibleHemisphere = (
   const pointCartesian = Cesium.Cartesian3.fromDegrees(
     point.longitude,
     point.latitude,
-    point.altitudeMeters,
+    point.altitudeMeters ?? 0,
     Cesium.Ellipsoid.WGS84,
     scratchCartesian,
   );

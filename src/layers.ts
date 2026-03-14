@@ -1,8 +1,8 @@
 import * as Cesium from 'cesium';
 import {
-  PlaneLayer,
-  type PlaneLayerPlane,
-} from './cesium/plane-layer';
+  GenericPointLayer,
+  type GenericPointLayerDescriptor,
+} from './cesium/generic-point-layer';
 import {
   ShipLayer,
   type ShipLayerShip,
@@ -11,17 +11,48 @@ import {
   EarthquakeLayer,
   type EarthquakeLayerEarthquake,
 } from './cesium/earthquake-layer';
+import { BasePointRecord } from './cesium/gpu-point-layer';
 
 export interface PlaygroundLayers {
-  planeLayer: PlaneLayer;
+  planeLayer: GenericPointLayer<BasePointRecord>;
   shipLayer: ShipLayer;
   earthquakeLayer: EarthquakeLayer;
   updatePoints(data: {
-    planes: PlaneLayerPlane[];
+    planes: BasePointRecord[];
     ships: ShipLayerShip[];
     earthquakes: EarthquakeLayerEarthquake[];
   }): void;
 }
+
+const PLANE_DEFAULT_POINT_SCALE = 70_000_000;
+const PLANE_DEFAULT_MIN_POINT_SIZE = 30;
+const PLANE_DEFAULT_MAX_POINT_SIZE = 128;
+const PLANE_DEFAULT_MAX_EXTRAPOLATION_SECONDS = 60 * 60 * 24 * 365;
+const PLANE_DEFAULT_MIN_ALTITUDE_METERS = 500;
+const PLANE_POINT_INDEX_ATTRIBUTE_LOCATION = 0;
+const PLANE_CULL_ANGLE = 0.5;
+const PLANE_BOUNDING_SPHERE = new Cesium.BoundingSphere(
+  Cesium.Cartesian3.ZERO,
+  Cesium.Ellipsoid.WGS84.maximumRadius + 100_000,
+);
+
+const PLANE_LAYER_DESCRIPTOR: GenericPointLayerDescriptor = {
+  name: 'PlaneLayer',
+  attributeName: 'a_planeIndex',
+  indexAttributeLocation: PLANE_POINT_INDEX_ATTRIBUTE_LOCATION,
+  boundingSphere: PLANE_BOUNDING_SPHERE,
+  cullDotThreshold: PLANE_CULL_ANGLE,
+  headingOffsetRadians: -Math.PI / 2,
+  shaderConfig: {
+    dataTextureUniform: 'u_planeTexture',
+    dataTextureDimensionsUniform: 'u_planeTextureDimensions',
+    spriteTextureUniform: 'u_spriteTexture',
+    motionTextureUniform: 'u_planeMotionTexture',
+    nowSecondsUniform: 'u_nowSeconds',
+    maxExtrapolationSecondsUniform: 'u_maxExtrapolationSeconds',
+    rotationEnabledUniform: 'u_rotationEnabled',
+  },
+};
 
 const PLANE_SPRITE_SOURCE = {
   url: '/svgs/medium-plane-2.svg',
@@ -55,8 +86,13 @@ export const createPlaygroundLayers = (viewer: Cesium.Viewer): PlaygroundLayers 
   });
   viewer.scene.primitives.add(shipLayer.primitive);
 
-  const planeLayer = new PlaneLayer([], {
+  const planeLayer = new GenericPointLayer<BasePointRecord>([], PLANE_LAYER_DESCRIPTOR, {
     sprite: PLANE_SPRITE_SOURCE,
+    pointScale: PLANE_DEFAULT_POINT_SCALE,
+    minPointSize: PLANE_DEFAULT_MIN_POINT_SIZE,
+    maxPointSize: PLANE_DEFAULT_MAX_POINT_SIZE,
+    maxExtrapolationSeconds: PLANE_DEFAULT_MAX_EXTRAPOLATION_SECONDS,
+    defaultAltitudeMeters: PLANE_DEFAULT_MIN_ALTITUDE_METERS,
   });
   viewer.scene.primitives.add(planeLayer.primitive);
 
@@ -65,7 +101,7 @@ export const createPlaygroundLayers = (viewer: Cesium.Viewer): PlaygroundLayers 
     shipLayer,
     earthquakeLayer,
     updatePoints(data) {
-      planeLayer.updatePlanes(data.planes);
+      planeLayer.setRecords(data.planes);
       shipLayer.updateShips(data.ships);
       earthquakeLayer.updateEarthquakes(data.earthquakes);
     },

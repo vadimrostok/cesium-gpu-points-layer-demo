@@ -1,11 +1,11 @@
 import type { EarthquakeLayerEarthquake } from './cesium/earthquake-layer';
-import type { PlaneLayerPlane } from './cesium/plane-layer';
 import type { ShipLayerShip } from './cesium/ship-layer';
+import type { BasePointRecord } from './cesium/gpu-point-layer';
 
 interface RawDirection {
-  x: number;
-  y: number;
-  z: number;
+  x?: number | null;
+  y?: number | null;
+  z?: number | null;
 }
 
 export type RecordType = 'aircraft' | 'ship' | 'earthquake';
@@ -15,8 +15,7 @@ interface RawProcessedRecord {
   type: RecordType;
   longitude: number;
   latitude: number;
-  direction: RawDirection;
-  timestamp: number;
+  direction?: RawDirection | null;
   details?: {
     altitudeMeters?: number | null;
     speedMps?: number | null;
@@ -30,7 +29,7 @@ export interface GlobeResponse {
 }
 
 interface PlaygroundLayerPoints {
-  planes: PlaneLayerPlane[];
+  planes: BasePointRecord[];
   ships: ShipLayerShip[];
   earthquakes: EarthquakeLayerEarthquake[];
 }
@@ -48,7 +47,7 @@ const normalizeDirection = (value: number): number => {
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
-const toHeadingRadians = (direction: RawDirection): number | null => {
+const toHeadingRadians = (direction?: RawDirection | null): number | null => {
   if (!isFiniteNumber(direction?.x) || !isFiniteNumber(direction?.y)) {
     return null;
   }
@@ -67,11 +66,7 @@ const isRawRecord = (value: unknown): value is RawProcessedRecord => {
     typeof record.id === 'string' &&
     (record.type === 'aircraft' || record.type === 'ship' || record.type === 'earthquake') &&
     isFiniteNumber(record.latitude) &&
-    isFiniteNumber(record.longitude) &&
-    typeof record.direction === 'object' &&
-    record.direction !== null &&
-    isFiniteNumber(record.direction.x) &&
-    isFiniteNumber(record.direction.y)
+    isFiniteNumber(record.longitude)
   );
 };
 
@@ -79,7 +74,7 @@ const isRawRecord = (value: unknown): value is RawProcessedRecord => {
  * Convert a ProcessedGlobeRecord payload into layer-ready points.
  */
 export const toLayerPoints = (response: GlobeResponse): PlaygroundLayerPoints => {
-  const planes: PlaneLayerPlane[] = [];
+  const planes: BasePointRecord[] = [];
   const ships: ShipLayerShip[] = [];
   const earthquakes: EarthquakeLayerEarthquake[] = [];
 
@@ -90,23 +85,17 @@ export const toLayerPoints = (response: GlobeResponse): PlaygroundLayerPoints =>
     }
 
     const headingRadians = toHeadingRadians(record.direction);
-    if (headingRadians === null) {
-      console.debug('[playground] dropping record with invalid direction', record.id);
-      continue;
-    }
-
-    const common = {
+    const common: BasePointRecord = {
       id: record.id,
       longitude: record.longitude,
       latitude: record.latitude,
-      headingRadians,
+      headingRadians: headingRadians ?? undefined,
     };
 
     if (record.type === 'aircraft') {
-      const rawAltitude = isFiniteNumber(record.details?.altitudeMeters)
-        ? record.details?.altitudeMeters ?? MIN_PLANE_ALTITUDE_METERS
-        : MIN_PLANE_ALTITUDE_METERS;
-      const altitudeMeters = Math.max(rawAltitude, MIN_PLANE_ALTITUDE_METERS);
+      const altitudeMeters = isFiniteNumber(record.details?.altitudeMeters)
+        ? Math.max(record.details?.altitudeMeters, MIN_PLANE_ALTITUDE_METERS)
+        : undefined;
       const speedMetersPerSecond = isFiniteNumber(record.details?.speedMps)
         ? record.details?.speedMps
         : undefined;
@@ -115,8 +104,6 @@ export const toLayerPoints = (response: GlobeResponse): PlaygroundLayerPoints =>
         ...common,
         altitudeMeters,
         speedMetersPerSecond,
-        directionX: record.direction.x,
-        directionY: record.direction.y,
       });
       continue;
     }
@@ -125,6 +112,7 @@ export const toLayerPoints = (response: GlobeResponse): PlaygroundLayerPoints =>
       ships.push({
         ...common,
         altitudeMeters: SHIP_ALTITUDE_METERS,
+        headingRadians: headingRadians ?? 0,
       });
       continue;
     }
@@ -132,6 +120,7 @@ export const toLayerPoints = (response: GlobeResponse): PlaygroundLayerPoints =>
     earthquakes.push({
       ...common,
       altitudeMeters: EARTHQUAKE_ALTITUDE_METERS,
+      headingRadians: headingRadians ?? 0,
     });
   }
 
