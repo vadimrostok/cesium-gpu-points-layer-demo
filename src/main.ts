@@ -2,9 +2,8 @@ import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import './styles.css';
 import Stats from 'stats.js';
-import { isGlobeResponse, toLayerPoints, type GlobeResponse } from './globe-data';
-import { GenericPointLayer } from './cesium/generic-point-layer';
-import type { BasePointRecord } from './cesium/gpu-point-layer';
+import { isPreparedGlobePoints, type PreparedGlobePoints } from './globe-data';
+import { GpuPointLayer, type BasePointRecord } from './cesium/gpu-point-layer';
 
 const STATUS_MESSAGE_ID = 'gpu-playground-status';
 const HUD_ID = 'gpu-playground-hud';
@@ -75,7 +74,7 @@ const mount = async (): Promise<void> => {
   };
   viewer.scene.postRender.addEventListener(onPostRender);
 
-  const planeLayer = new GenericPointLayer<BasePointRecord>([], {
+  const planeLayer = new GpuPointLayer<BasePointRecord>([], {
     name: 'PlaneLayer',
     textureName: 'plane',
     headingOffsetRadians: -Math.PI / 2,
@@ -92,7 +91,7 @@ const mount = async (): Promise<void> => {
     defaultAltitudeMeters: 500,
     drawOrder: 2,
   });
-  const shipLayer = new GenericPointLayer<BasePointRecord>([], {
+  const shipLayer = new GpuPointLayer<BasePointRecord>([], {
     name: 'ShipLayer',
     textureName: 'ship',
     sprite: {
@@ -102,11 +101,11 @@ const mount = async (): Promise<void> => {
       resolution: 2,
     },
     pointScale: 40_000_000,
-    rotateToHeading: false,
+    rotationEnabled: false,
     enableAnimation: false,
     drawOrder: 1,
   });
-  const earthquakeLayer = new GenericPointLayer<BasePointRecord>([], {
+  const earthquakeLayer = new GpuPointLayer<BasePointRecord>([], {
     name: 'EarthquakeLayer',
     textureName: 'earthquake',
     sprite: {
@@ -118,47 +117,37 @@ const mount = async (): Promise<void> => {
     pointScale: 40_000_000,
     minPointSize: 128,
     maxPointSize: 256,
-    rotateToHeading: false,
+    rotationEnabled: false,
     enableAnimation: false,
     drawOrder: 0,
   });
 
-  const playgroundLayers = [earthquakeLayer, shipLayer, planeLayer].slice().sort((left, right) => {
-    return left.drawOrder - right.drawOrder;
-  });
-  for (const layer of playgroundLayers) {
-    viewer.scene.primitives.add(layer.primitive);
-  }
-
-  const updatePoints = (data: {
-    planes: BasePointRecord[];
-    ships: BasePointRecord[];
-    earthquakes: BasePointRecord[];
-  }): void => {
-    planeLayer.setRecords(data.planes);
-    shipLayer.setRecords(data.ships);
-    earthquakeLayer.setRecords(data.earthquakes);
-  };
+  [earthquakeLayer, shipLayer, planeLayer]
+    .sort((left, right) => left.drawOrder - right.drawOrder)
+    .forEach((layer: GpuPointLayer<BasePointRecord>) => {
+      viewer.scene.primitives.add(layer.primitive);
+    });
 
   viewer.camera.setView({
     destination: Cesium.Cartesian3.fromDegrees(10, 28, 20_000_000),
   });
 
   const applySnapshot = async (): Promise<void> => {
-    const response = await fetch('/be-globe-response.json');
+    const response = await fetch('/be-globe-layer-points.json');
     if (!response.ok) {
       throw new Error(`Failed to load snapshot: ${response.status} ${response.statusText}`);
     }
 
-    const payload = (await response.json()) as GlobeResponse;
-    if (!isGlobeResponse(payload)) {
-      throw new Error('Snapshot does not contain a valid GlobeResponse shape.');
+    const payload = (await response.json()) as PreparedGlobePoints;
+    if (!isPreparedGlobePoints(payload)) {
+      throw new Error('Snapshot does not contain a valid prepared layer payload.');
     }
 
-    const points = toLayerPoints(payload);
-    updatePoints(points);
+    planeLayer.setRecords(payload.planes);
+    shipLayer.setRecords(payload.ships);
+    earthquakeLayer.setRecords(payload.earthquakes);
     statusEl.textContent =
-      `records: ${payload.records.length} (aircraft ${points.planes.length}, ships ${points.ships.length}, earthquakes ${points.earthquakes.length})`;
+      `records: ${payload.planes.length + payload.ships.length + payload.earthquakes.length} (aircraft ${payload.planes.length}, ships ${payload.ships.length}, earthquakes ${payload.earthquakes.length})`;
   };
 
   try {
@@ -166,7 +155,7 @@ const mount = async (): Promise<void> => {
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     console.error('[gpu-playground] failed to load static snapshot', details);
-    statusEl.textContent = 'failed to load /be-globe-response.json';
+    statusEl.textContent = 'failed to load /be-globe-layer-points.json';
   }
 
   const cleanup = (): void => {

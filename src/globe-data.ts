@@ -8,7 +8,7 @@ interface RawDirection {
 
 export type RecordType = 'aircraft' | 'ship' | 'earthquake';
 
-interface RawProcessedRecord {
+export interface RawGlobeRecord {
   id: string;
   type: RecordType;
   longitude: number;
@@ -22,111 +22,52 @@ interface RawProcessedRecord {
 }
 
 export interface GlobeResponse {
-  records: RawProcessedRecord[];
+  records: RawGlobeRecord[];
   limitPerType: number | null;
 }
 
-interface PlaygroundLayerPoints {
+export interface PreparedGlobePoints {
   planes: BasePointRecord[];
   ships: BasePointRecord[];
   earthquakes: BasePointRecord[];
 }
 
-const MIN_PLANE_ALTITUDE_METERS = 500;
-const SHIP_ALTITUDE_METERS = 1_000;
-const EARTHQUAKE_ALTITUDE_METERS = 1_000;
-const TWO_PI = Math.PI * 2;
-
-const normalizeDirection = (value: number): number => {
-  const normalized = value % TWO_PI;
-  return normalized < 0 ? normalized + TWO_PI : normalized;
-};
-
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
-const toHeadingRadians = (direction?: RawDirection | null): number | null => {
-  if (!isFiniteNumber(direction?.x) || !isFiniteNumber(direction?.y)) {
-    return null;
-  }
-
-  const radians = Math.atan2(direction.y, direction.x);
-  return normalizeDirection(radians);
-};
-
-const isRawRecord = (value: unknown): value is RawProcessedRecord => {
+const isBasePointRecord = (value: unknown): value is BasePointRecord => {
   if (!value || typeof value !== 'object') {
     return false;
   }
 
-  const record = value as RawProcessedRecord;
+  const point = value as BasePointRecord;
   return (
-    typeof record.id === 'string' &&
-    (record.type === 'aircraft' || record.type === 'ship' || record.type === 'earthquake') &&
-    isFiniteNumber(record.latitude) &&
-    isFiniteNumber(record.longitude)
+    typeof point.id === 'string' &&
+    isFiniteNumber(point.longitude) &&
+    isFiniteNumber(point.latitude) &&
+    (!('altitudeMeters' in point) || isFiniteNumber(point.altitudeMeters)) &&
+    (!('headingRadians' in point) || isFiniteNumber(point.headingRadians)) &&
+    (!('speedMetersPerSecond' in point) || isFiniteNumber(point.speedMetersPerSecond))
   );
 };
 
 /**
- * Convert a ProcessedGlobeRecord payload into layer-ready points.
+ * WIP (work in progress) check for prepared snapshot payload.
  */
-export const toLayerPoints = (response: GlobeResponse): PlaygroundLayerPoints => {
-  const planes: BasePointRecord[] = [];
-  const ships: BasePointRecord[] = [];
-  const earthquakes: BasePointRecord[] = [];
-
-  for (const record of response.records) {
-    if (!isRawRecord(record)) {
-      console.debug('[playground] dropping invalid record: missing required numeric fields', record);
-      continue;
-    }
-
-    const headingRadians = toHeadingRadians(record.direction);
-    const common: BasePointRecord = {
-      id: record.id,
-      longitude: record.longitude,
-      latitude: record.latitude,
-      headingRadians: headingRadians ?? undefined,
-    };
-
-    if (record.type === 'aircraft') {
-      const altitudeMeters = isFiniteNumber(record.details?.altitudeMeters)
-        ? Math.max(record.details?.altitudeMeters, MIN_PLANE_ALTITUDE_METERS)
-        : undefined;
-      const speedMetersPerSecond = isFiniteNumber(record.details?.speedMps)
-        ? record.details?.speedMps
-        : undefined;
-
-      planes.push({
-        ...common,
-        altitudeMeters,
-        speedMetersPerSecond,
-      });
-      continue;
-    }
-
-    if (record.type === 'ship') {
-      ships.push({
-        ...common,
-        altitudeMeters: SHIP_ALTITUDE_METERS,
-        headingRadians: headingRadians ?? 0,
-      });
-      continue;
-    }
-
-    earthquakes.push({
-      ...common,
-      altitudeMeters: EARTHQUAKE_ALTITUDE_METERS,
-      headingRadians: headingRadians ?? 0,
-    });
+export const isPreparedGlobePoints = (value: unknown): value is PreparedGlobePoints => {
+  if (!value || typeof value !== 'object') {
+    return false;
   }
 
-  return {
-    planes,
-    ships,
-    earthquakes,
-  };
+  const candidate = value as PreparedGlobePoints;
+  return (
+    Array.isArray(candidate.planes) &&
+    candidate.planes.every(isBasePointRecord) &&
+    Array.isArray(candidate.ships) &&
+    candidate.ships.every(isBasePointRecord) &&
+    Array.isArray(candidate.earthquakes) &&
+    candidate.earthquakes.every(isBasePointRecord)
+  );
 };
 
 /**

@@ -1,6 +1,6 @@
 import * as Cesium from 'cesium';
 import type { Primitive } from 'cesium';
-import { rasterizeSvgToTexture } from './sprite-texture';
+import { rasterizeSvgToTexture, SvgSpriteRasterized } from './sprite-texture';
 
 export interface PointLayerSpriteSource {
   url: string;
@@ -158,16 +158,19 @@ export type CesiumRuntimeModule = typeof Cesium & {
 
 const CesiumRuntime = Cesium as CesiumRuntimeModule;
 const CAMERA_DIRECTION_EPSILON = 1e-6;
-const DEFAULT_CULL_DOT_THRESHOLD = 0.5;
 const DEFAULT_LAYOUT: PointTextureLayout = {
   width: 1,
   height: 1,
   capacity: 1,
 };
-const DEFAULT_MAX_EXTRAPOLATION_SECONDS = 120;
-const DEFAULT_MIN_POINT_SIZE = 30;
-const DEFAULT_MAX_POINT_SIZE = 128;
-const DEFAULT_POINT_SCALE = 40_000_000;
+export const DEFAULT_POINT_SCALE = 40_000_000;
+export const DEFAULT_MIN_POINT_SIZE = 30;
+export const DEFAULT_MAX_POINT_SIZE = 128;
+export const DEFAULT_MAX_EXTRAPOLATION_SECONDS = 60 * 60 * 24 * 365;
+export const DEFAULT_POINT_ALTITUDE_METERS = 10;
+export const DEFAULT_POINT_HEADING_RADIANS = 0;
+export const DEFAULT_POINT_CULL_DOT_THRESHOLD = 0.5;
+const DEFAULT_ROTATION_ENABLED = true;
 
 const scratchCameraDirection = new Cesium.Cartesian3();
 
@@ -605,6 +608,323 @@ export const buildPointShaders = (
   fragmentWebGL1: buildPointFragmentShaderWebGL1(config.spriteTextureUniform),
 });
 
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+const normalizeTextureName = (textureName: string): string =>
+  textureName.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_') || 'point';
+
+export interface GpuPointLayerShaderConfig {
+  dataTextureUniform: string;
+  dataTextureDimensionsUniform: string;
+  spriteTextureUniform: string;
+  motionTextureUniform: string;
+  nowSecondsUniform: string;
+  maxExtrapolationSecondsUniform: string;
+  rotationEnabledUniform: string;
+}
+
+export interface GpuPointLayerDescriptor {
+  name?: string;
+  attributeName?: string;
+  indexAttributeLocation?: number;
+  boundingSphere?: Cesium.BoundingSphere;
+  cullDotThreshold?: number;
+  headingOffsetRadians?: number;
+  shaders?: CesiumGpuPointLayerShaders;
+  shaderConfig?: Partial<GpuPointLayerShaderConfig>;
+}
+
+export interface GpuPointLayerOptions {
+  name?: string;
+  textureName?: string;
+  attributeName?: string;
+  indexAttributeLocation?: number;
+  boundingSphere?: Cesium.BoundingSphere;
+  pointScale?: number;
+  minPointSize?: number;
+  maxPointSize?: number;
+  maxExtrapolationSeconds?: number;
+  cullDotThreshold?: number;
+  rotationEnabled?: boolean;
+  headingOffsetRadians?: number;
+  sprite: SpriteTextureAtlas | PointLayerSpriteSource;
+  enableAnimation?: boolean;
+  defaultAltitudeMeters?: number;
+  defaultHeadingRadians?: number;
+  shaderConfig?: Partial<GpuPointLayerShaderConfig>;
+  /**
+   * Lower values are rendered first, higher values are rendered later.
+   */
+  drawOrder?: number;
+}
+
+interface GpuPreparedPoint
+  extends Omit<BasePointRecord, 'altitudeMeters' | 'headingRadians'>,
+    PreparedPointRecord {
+  altitudeMeters: number;
+  headingRadians: number;
+  speedMetersPerSecond: number;
+  directionX: number;
+  directionY: number;
+  timestampSeconds: number;
+}
+
+const DEFAULT_POINT_SHADER_CONFIG: GpuPointLayerShaderConfig = {
+  dataTextureUniform: 'u_pointTexture',
+  dataTextureDimensionsUniform: 'u_pointTextureDimensions',
+  spriteTextureUniform: 'u_spriteTexture',
+  motionTextureUniform: 'u_pointMotionTexture',
+  nowSecondsUniform: 'u_nowSeconds',
+  maxExtrapolationSecondsUniform: 'u_maxExtrapolationSeconds',
+  rotationEnabledUniform: 'u_rotationEnabled',
+};
+const DEFAULT_LAYER_NAME = 'GpuPointLayer';
+const DEFAULT_ATTRIBUTE_NAME_SUFFIX = 'Index';
+const DEFAULT_ATTRIBUTE_INDEX = 0;
+const DEFAULT_BOUNDING_SPHERE = new Cesium.BoundingSphere(
+  Cesium.Cartesian3.ZERO,
+  Cesium.Ellipsoid.WGS84.maximumRadius + 1_000_000,
+);
+
+const resolveShaderConfig = (
+  raw?: Partial<GpuPointLayerShaderConfig>,
+): GpuPointLayerShaderConfig => ({
+  dataTextureUniform: raw?.dataTextureUniform ?? DEFAULT_POINT_SHADER_CONFIG.dataTextureUniform,
+  dataTextureDimensionsUniform:
+    raw?.dataTextureDimensionsUniform ??
+    DEFAULT_POINT_SHADER_CONFIG.dataTextureDimensionsUniform,
+  spriteTextureUniform: raw?.spriteTextureUniform ?? DEFAULT_POINT_SHADER_CONFIG.spriteTextureUniform,
+  motionTextureUniform:
+    raw?.motionTextureUniform ?? DEFAULT_POINT_SHADER_CONFIG.motionTextureUniform,
+  nowSecondsUniform: raw?.nowSecondsUniform ?? DEFAULT_POINT_SHADER_CONFIG.nowSecondsUniform,
+  maxExtrapolationSecondsUniform:
+    raw?.maxExtrapolationSecondsUniform ??
+    DEFAULT_POINT_SHADER_CONFIG.maxExtrapolationSecondsUniform,
+  rotationEnabledUniform:
+    raw?.rotationEnabledUniform ?? DEFAULT_POINT_SHADER_CONFIG.rotationEnabledUniform,
+});
+
+/**
+ * Generic GPU point layer with optional rotation and optional motion extrapolation.
+ */
+export class GpuPointLayer<TPoint extends BasePointRecord> {
+  public readonly primitive: Primitive;
+  public readonly drawOrder: number;
+
+  private readonly pointLayer: CesiumPointTextureLayer<TPoint, GpuPreparedPoint>;
+  private readonly defaultAltitudeMeters: number;
+  private readonly defaultHeadingRadians: number;
+  private readonly enableAnimation: boolean;
+  private readonly cullDotThreshold: number;
+  private readonly playbackStartSeconds = performance.now() / 1000;
+  private readonly motionAnchorSeconds = 0.0001;
+
+  public constructor(points: readonly TPoint[] = [], options: GpuPointLayerOptions) {
+    this.drawOrder = options.drawOrder ?? 0;
+    const resolvedDescriptor = this.resolveDescriptor(options);
+    this.defaultAltitudeMeters = options.defaultAltitudeMeters ?? DEFAULT_POINT_ALTITUDE_METERS;
+    this.defaultHeadingRadians = options.defaultHeadingRadians ?? DEFAULT_POINT_HEADING_RADIANS;
+    this.enableAnimation = options.enableAnimation ?? true;
+    this.cullDotThreshold =
+      options.cullDotThreshold ?? DEFAULT_POINT_CULL_DOT_THRESHOLD;
+    this.pointLayer = this.createPointLayer(resolvedDescriptor, options);
+    this.pointLayer.setRecords(points);
+    this.primitive = this.pointLayer.primitive;
+  }
+
+  public setRecords(points: readonly TPoint[]): void {
+    this.pointLayer.setRecords(points);
+  }
+
+  public setSprite(sprite: SvgSpriteRasterized): void {
+    this.pointLayer.setSprite(this.normalizeSpriteInput(sprite));
+  }
+
+  public setVisiblePointIds(visiblePointIds: Iterable<string> | null): void {
+    this.pointLayer.setVisiblePointIds(visiblePointIds);
+  }
+
+  public destroy(): void {
+    this.pointLayer.destroy();
+  }
+
+  private createPointLayer(
+    descriptor: GpuPointLayerDescriptor,
+    options: GpuPointLayerOptions,
+  ): CesiumPointTextureLayer<TPoint, GpuPreparedPoint> {
+    const enableAnimation = options.enableAnimation ?? true;
+    const resolvedAttributeName = descriptor.attributeName ?? `a_${normalizeTextureName(
+      options.textureName ?? options.name ?? 'point',
+    )}${DEFAULT_ATTRIBUTE_NAME_SUFFIX}`;
+    const shaderConfig = resolveShaderConfig(descriptor.shaderConfig);
+    const shaders =
+      descriptor.shaders ??
+      buildPointShaders({
+        attributeName: resolvedAttributeName,
+        dataTextureUniform: shaderConfig.dataTextureUniform,
+        dataTextureDimensionsUniform: shaderConfig.dataTextureDimensionsUniform,
+        spriteTextureUniform: shaderConfig.spriteTextureUniform,
+        headingOffsetRadians: descriptor.headingOffsetRadians ?? 0,
+        hasMotionExtrapolation: enableAnimation,
+        motionTextureUniform: shaderConfig.motionTextureUniform,
+        nowSecondsUniform: shaderConfig.nowSecondsUniform,
+        maxExtrapolationSecondsUniform: shaderConfig.maxExtrapolationSecondsUniform,
+      });
+
+    const cesiumUniforms: CesiumGpuPointLayerUniforms = {
+      dataTexture: shaderConfig.dataTextureUniform,
+      dataTextureDimensions: shaderConfig.dataTextureDimensionsUniform,
+      motionTexture: shaderConfig.motionTextureUniform,
+      nowSeconds: shaderConfig.nowSecondsUniform,
+      maxExtrapolationSeconds: shaderConfig.maxExtrapolationSecondsUniform,
+      spriteTexture: shaderConfig.spriteTextureUniform,
+      rotationEnabled: shaderConfig.rotationEnabledUniform,
+    };
+
+    const layerDescriptor: CesiumGpuPointLayerDescriptor<TPoint, GpuPreparedPoint> = {
+      name: descriptor.name ?? DEFAULT_LAYER_NAME,
+      shaders,
+      uniforms: cesiumUniforms,
+      indexAttributeName: resolvedAttributeName,
+      indexAttributeLocation: descriptor.indexAttributeLocation ?? DEFAULT_ATTRIBUTE_INDEX,
+      boundingSphere:
+        descriptor.boundingSphere ??
+        new Cesium.BoundingSphere(
+          Cesium.Cartesian3.ZERO,
+          Cesium.Ellipsoid.WGS84.maximumRadius + 1_000_000,
+        ),
+      options: {
+        pointScale: options.pointScale ?? DEFAULT_POINT_SCALE,
+        minPointSize: options.minPointSize ?? DEFAULT_MIN_POINT_SIZE,
+        maxPointSize: options.maxPointSize ?? DEFAULT_MAX_POINT_SIZE,
+        maxExtrapolationSeconds:
+          options.maxExtrapolationSeconds ?? DEFAULT_MAX_EXTRAPOLATION_SECONDS,
+        sprite: options.sprite,
+        rotationEnabled: options.rotationEnabled,
+        depthTest: false,
+        depthMask: false,
+      },
+      cullDotThreshold: this.cullDotThreshold,
+      prepareRecord: (point) => this.preparePointForRendering(point),
+      packMainData: (point, output, valueOffset): void => {
+        output[valueOffset] = point.longitude;
+        output[valueOffset + 1] = point.latitude;
+        output[valueOffset + 2] = point.altitudeMeters;
+        output[valueOffset + 3] = point.headingRadians;
+      },
+      packMotionData: enableAnimation
+        ? (point, output, valueOffset): void => {
+            output[valueOffset] = point.speedMetersPerSecond;
+            output[valueOffset + 1] = point.directionX;
+            output[valueOffset + 2] = point.directionY;
+            output[valueOffset + 3] = point.timestampSeconds;
+          }
+        : undefined,
+      getNowSeconds: (frameState) => {
+        void frameState;
+        return performance.now() / 1000 - this.playbackStartSeconds;
+      },
+    };
+
+    return new CesiumPointTextureLayer(layerDescriptor);
+  }
+
+  private normalizeSpriteInput(sprite: SvgSpriteRasterized): SpriteTextureAtlas {
+    return {
+      width: sprite.width,
+      height: sprite.height,
+      pixels: sprite.pixels,
+    };
+  }
+
+  private preparePointForRendering(point: TPoint): GpuPreparedPoint | null {
+    const altitudeMeters = isFiniteNumber(point.altitudeMeters)
+      ? point.altitudeMeters
+      : this.defaultAltitudeMeters;
+    const rawHeadingRadians = isFiniteNumber(point.headingRadians)
+      ? point.headingRadians
+      : this.defaultHeadingRadians;
+    const hasHeading = isFiniteNumber(point.headingRadians);
+    const headingRadians = Cesium.Math.zeroToTwoPi(rawHeadingRadians);
+
+    if (
+      !isFiniteNumber(point.longitude) ||
+      !isFiniteNumber(point.latitude) ||
+      !isFiniteNumber(altitudeMeters) ||
+      !isFiniteNumber(headingRadians)
+    ) {
+      return null;
+    }
+
+    const directionFromEarthCenter = Cesium.Cartesian3.fromDegrees(
+      point.longitude,
+      point.latitude,
+      altitudeMeters,
+      Cesium.Ellipsoid.WGS84,
+      new Cesium.Cartesian3(),
+    );
+    Cesium.Cartesian3.normalize(directionFromEarthCenter, directionFromEarthCenter);
+
+    const speedMetersPerSecond =
+      this.enableAnimation && isFiniteNumber(point.speedMetersPerSecond)
+        ? Math.max(point.speedMetersPerSecond, 0)
+        : 0;
+    const directionX = speedMetersPerSecond > 0 && hasHeading ? Math.cos(headingRadians) : 0;
+    const directionY = speedMetersPerSecond > 0 && hasHeading ? Math.sin(headingRadians) : 0;
+
+    return {
+      id: point.id,
+      longitude: point.longitude,
+      latitude: point.latitude,
+      altitudeMeters,
+      headingRadians,
+      speedMetersPerSecond,
+      directionX,
+      directionY,
+      directionFromEarthCenter,
+      timestampSeconds: this.motionAnchorSeconds,
+    };
+  }
+
+  private resolveDescriptor(options: GpuPointLayerOptions): GpuPointLayerDescriptor {
+    const normalizedTextureName = normalizeTextureName(
+      options.textureName ?? options.name ?? 'point',
+    );
+    const prefix = `u_${normalizedTextureName}`;
+
+    return {
+      name: options.name ?? DEFAULT_LAYER_NAME,
+      attributeName:
+        options.attributeName ?? `a_${normalizedTextureName}${DEFAULT_ATTRIBUTE_NAME_SUFFIX}`,
+      indexAttributeLocation: options.indexAttributeLocation ?? DEFAULT_ATTRIBUTE_INDEX,
+      boundingSphere: options.boundingSphere ?? DEFAULT_BOUNDING_SPHERE,
+      cullDotThreshold: options.cullDotThreshold ?? DEFAULT_POINT_CULL_DOT_THRESHOLD,
+      headingOffsetRadians: options.headingOffsetRadians,
+      shaderConfig: {
+        ...resolveShaderConfig(options.shaderConfig),
+        dataTextureUniform: options.shaderConfig?.dataTextureUniform ?? `${prefix}Texture`,
+        dataTextureDimensionsUniform:
+          options.shaderConfig?.dataTextureDimensionsUniform ?? `${prefix}TextureDimensions`,
+        spriteTextureUniform:
+          options.shaderConfig?.spriteTextureUniform ??
+          DEFAULT_POINT_SHADER_CONFIG.spriteTextureUniform,
+        motionTextureUniform:
+          options.shaderConfig?.motionTextureUniform ?? `${prefix}MotionTexture`,
+        nowSecondsUniform:
+          options.shaderConfig?.nowSecondsUniform ??
+          DEFAULT_POINT_SHADER_CONFIG.nowSecondsUniform,
+        maxExtrapolationSecondsUniform:
+          options.shaderConfig?.maxExtrapolationSecondsUniform ??
+          DEFAULT_POINT_SHADER_CONFIG.maxExtrapolationSecondsUniform,
+        rotationEnabledUniform:
+          options.shaderConfig?.rotationEnabledUniform ??
+          DEFAULT_POINT_SHADER_CONFIG.rotationEnabledUniform,
+      },
+    };
+  }
+}
+
 export interface CesiumGpuPointLayerOptions {
   pointScale?: number;
   minPointSize?: number;
@@ -613,7 +933,7 @@ export interface CesiumGpuPointLayerOptions {
   depthTest?: boolean;
   depthMask?: boolean;
   sprite?: SpriteTextureAtlas | PointLayerSpriteSource;
-  rotateToHeading?: boolean;
+  rotationEnabled?: boolean;
 }
 
 export interface CesiumGpuPointLayerDescriptor<
@@ -708,9 +1028,10 @@ export class CesiumPointTextureLayer<
     this.maxPointSize = descriptor.options?.maxPointSize ?? DEFAULT_MAX_POINT_SIZE;
     this.maxExtrapolationSeconds =
       descriptor.options?.maxExtrapolationSeconds ?? DEFAULT_MAX_EXTRAPOLATION_SECONDS;
-    this.cullDotThreshold = descriptor.cullDotThreshold ?? DEFAULT_CULL_DOT_THRESHOLD;
+    this.cullDotThreshold = descriptor.cullDotThreshold ?? DEFAULT_POINT_CULL_DOT_THRESHOLD;
     this.hasMotionTexture = descriptor.packMotionData !== undefined;
-    this.rotationEnabled = descriptor.options?.rotateToHeading ?? true;
+    this.rotationEnabled =
+      descriptor.options?.rotationEnabled ?? DEFAULT_ROTATION_ENABLED;
     this.getNowSeconds = descriptor.getNowSeconds ?? (() => 0);
     this.indexAttributeName = descriptor.indexAttributeName;
     this.indexAttributeLocation = descriptor.indexAttributeLocation;

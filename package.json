@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "start": "start .",
     "fetch:be-response": "node scripts/fetch-be-response.mjs",
+    "prepare:globe-points": "node scripts/prepare-globe-points.mjs",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
