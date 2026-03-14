@@ -5,10 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:lib": "npm --prefix ../cesium-gpu-points-layer run build",
     "build": "vite build",
-    "predev": "npm run build:lib",
-    "prebuild": "npm run build:lib",
+    "build:lib": "npm --prefix ../cesium-gpu-points-layer run build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "start": "start .",
     "fetch:be-response": "node scripts/fetch-be-response.mjs",
@@ -17,12 +15,26 @@
   },
   "dependencies": {
     "cesium": "^1.139.0",
-    "cesium-gpu-points-layer": "file:../cesium-gpu-points-layer",
+    "cesium-gpu-points-layer": "^0.2.2",
     "stats.js": "^0.17.0"
   },
   "devDependencies": {
     "start": "^5.0.0",
     "vite": "^7.1.3",
     "vite-plugin-static-copy": "^3.2.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vadimrostok/cesium-gpu-points-layer-demo.git"
+  },
+  "keywords": [
+    "cesium demo",
+    "gpu sprites",
+    "gpu points",
+    "performance demo",
+    "packed textures demo",
+    "custom point sprites demo"
+  ],
+  "author": "Vadym Rostok",
+  "homepage": "https://github.com/vadimrostok/cesium-gpu-points-layer-demo#readme"
 }

@@ -45,31 +45,53 @@ Library consumers only deal with already prepared records:
 
 ## Library wiring (demo + lib split)
 
-The demo consumes the reusable package from this sibling project:
+The demo consumes the reusable package from npm:
 
 ```json
-"cesium-gpu-points-layer": "file:../cesium-gpu-points-layer"
+"cesium-gpu-points-layer": "^0.2.0"
 ```
 
-When publishing, replace that with the published package version (for example, `^0.1.0`).
+If you use a different package version, pin it to that semver range.
 
-In local development, keep the library built before running the demo:
+Set `VITE_PAGES_BASE_PATH` if you host the demo outside:
+
+```bash
+VITE_PAGES_BASE_PATH=/some-subpath/
+npm run build
+```
+
+In local development against the sibling library repo, use:
 
 ```bash
 cd <path-to-lib>/cesium-gpu-points-layer
 npm install
 cd <path-to-demo>/cesium-gpu-points-layer-demo
-npm install
+npm install ../cesium-gpu-points-layer
 npm run dev
 ```
 
 If you prefer explicit commands from the demo project root:
 
 ```bash
+cd <path-to-lib>/cesium-gpu-points-layer
+npm run build
+cd <path-to-demo>/cesium-gpu-points-layer-demo
 npm install
-npm run build:lib
+npm install ../cesium-gpu-points-layer
+npm run build
 npm run dev
 ```
+
+### Deployment checklist (GitHub Pages)
+
+```bash
+npm install
+npm run build
+git push origin main
+```
+
+GitHub Actions workflow (`.github/workflows/gh-pages.yml`) uploads `dist/` and deploys it to Pages using
+`actions/upload-pages-artifact` + `actions/deploy-pages`.
 
 ## Notes
 
@@ -81,3 +103,9 @@ This project is the demo companion and intentionally keeps only app-specific:
 - overlay UI (FPS/status)
 
 Reusable rendering logic lives in `cesium-gpu-points-layer`.
+
+## Common debug for Pages
+
+- If sprites or data are 404, verify requests include the repo base path (for example:
+  `/cesium-gpu-points-layer-demo/svgs/...`).
+- If Cesium assets fail, confirm `CESIUM_BASE_URL` resolves to `/cesium-gpu-points-layer-demo/cesium`.

@@ -9,6 +9,9 @@ const STATUS_MESSAGE_ID = 'gpu-playground-status';
 const HUD_ID = 'gpu-playground-hud';
 
 const mount = async (): Promise<void> => {
+  const assetUrl = (path: string): string =>
+    `${import.meta.env.BASE_URL}${path.startsWith('/') ? path.substring(1) : path}`;
+
   const host = document.getElementById('app');
   if (!host) {
     throw new Error('Root app container is missing.');
@@ -79,7 +82,7 @@ const mount = async (): Promise<void> => {
     textureName: 'plane',
     headingOffsetRadians: -Math.PI / 2,
     sprite: {
-      url: '/svgs/medium-plane-2.svg',
+      url: assetUrl('svgs/medium-plane-2.svg'),
       width: 80,
       height: 80,
       resolution: 2,
@@ -95,7 +98,7 @@ const mount = async (): Promise<void> => {
     name: 'ShipLayer',
     textureName: 'ship',
     sprite: {
-      url: '/svgs/ship.svg',
+      url: assetUrl('svgs/ship.svg'),
       width: 96,
       height: 96,
       resolution: 2,
@@ -109,7 +112,7 @@ const mount = async (): Promise<void> => {
     name: 'EarthquakeLayer',
     textureName: 'earthquake',
     sprite: {
-      url: '/svgs/earthquake.svg',
+      url: assetUrl('svgs/earthquake.svg'),
       width: 80,
       height: 80,
       resolution: 2,
@@ -133,7 +136,7 @@ const mount = async (): Promise<void> => {
   });
 
   const applySnapshot = async (): Promise<void> => {
-    const response = await fetch('/be-globe-layer-points.json');
+    const response = await fetch(assetUrl('be-globe-layer-points.json'));
     if (!response.ok) {
       throw new Error(`Failed to load snapshot: ${response.status} ${response.statusText}`);
     }
@@ -155,7 +158,7 @@ const mount = async (): Promise<void> => {
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     console.error('[gpu-playground] failed to load static snapshot', details);
-    statusEl.textContent = 'failed to load /be-globe-layer-points.json';
+    statusEl.textContent = 'failed to load be-globe-layer-points.json';
   }
 
   const cleanup = (): void => {
