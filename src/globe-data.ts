@@ -1,5 +1,3 @@
-import type { EarthquakeLayerEarthquake } from './cesium/earthquake-layer';
-import type { ShipLayerShip } from './cesium/ship-layer';
 import type { BasePointRecord } from './cesium/gpu-point-layer';
 
 interface RawDirection {
@@ -30,8 +28,8 @@ export interface GlobeResponse {
 
 interface PlaygroundLayerPoints {
   planes: BasePointRecord[];
-  ships: ShipLayerShip[];
-  earthquakes: EarthquakeLayerEarthquake[];
+  ships: BasePointRecord[];
+  earthquakes: BasePointRecord[];
 }
 
 const MIN_PLANE_ALTITUDE_METERS = 500;
@@ -75,8 +73,8 @@ const isRawRecord = (value: unknown): value is RawProcessedRecord => {
  */
 export const toLayerPoints = (response: GlobeResponse): PlaygroundLayerPoints => {
   const planes: BasePointRecord[] = [];
-  const ships: ShipLayerShip[] = [];
-  const earthquakes: EarthquakeLayerEarthquake[] = [];
+  const ships: BasePointRecord[] = [];
+  const earthquakes: BasePointRecord[] = [];
 
   for (const record of response.records) {
     if (!isRawRecord(record)) {

@@ -33,6 +33,7 @@ export interface BasePointRecord {
   latitude: number;
   altitudeMeters?: number;
   headingRadians?: number;
+  speedMetersPerSecond?: number;
 }
 
 export interface PreparedPointRecord extends BasePointRecord {

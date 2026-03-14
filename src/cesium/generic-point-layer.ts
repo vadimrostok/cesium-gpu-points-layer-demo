@@ -32,10 +32,10 @@ export interface GenericPointLayerShaderConfig {
 }
 
 export interface GenericPointLayerDescriptor {
-  name: string;
-  attributeName: string;
-  indexAttributeLocation: number;
-  boundingSphere: Cesium.BoundingSphere;
+  name?: string;
+  attributeName?: string;
+  indexAttributeLocation?: number;
+  boundingSphere?: Cesium.BoundingSphere;
   cullDotThreshold?: number;
   headingOffsetRadians?: number;
   shaders?: CesiumGpuPointLayerShaders;
@@ -43,15 +43,27 @@ export interface GenericPointLayerDescriptor {
 }
 
 export interface GenericPointLayerOptions {
+  name?: string;
+  textureName?: string;
+  attributeName?: string;
+  indexAttributeLocation?: number;
+  boundingSphere?: Cesium.BoundingSphere;
   pointScale?: number;
   minPointSize?: number;
   maxPointSize?: number;
   maxExtrapolationSeconds?: number;
+  cullDotThreshold?: number;
   rotateToHeading?: boolean;
+  headingOffsetRadians?: number;
   sprite: SpriteTextureAtlas | PointLayerSpriteSource;
   enableAnimation?: boolean;
   defaultAltitudeMeters?: number;
   defaultHeadingRadians?: number;
+  shaderConfig?: Partial<GenericPointLayerShaderConfig>;
+  /**
+   * Lower values are rendered first, higher values are rendered later.
+   */
+  drawOrder?: number;
 }
 
 interface GenericPreparedPoint
@@ -74,6 +86,17 @@ const DEFAULT_POINT_SHADER_CONFIG: GenericPointLayerShaderConfig = {
   maxExtrapolationSecondsUniform: 'u_maxExtrapolationSeconds',
   rotationEnabledUniform: 'u_rotationEnabled',
 };
+const DEFAULT_LAYER_NAME = 'GenericPointLayer';
+const DEFAULT_TEXTURE_NAME = 'point';
+const DEFAULT_ATTRIBUTE_NAME_SUFFIX = 'Index';
+const DEFAULT_ATTRIBUTE_INDEX = 0;
+const DEFAULT_BOUNDING_SPHERE = new Cesium.BoundingSphere(
+  Cesium.Cartesian3.ZERO,
+  Cesium.Ellipsoid.WGS84.maximumRadius + 1_000_000,
+);
+
+const normalizeTextureName = (textureName: string): string =>
+  textureName.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_') || DEFAULT_TEXTURE_NAME;
 
 const resolveShaderConfig = (
   raw?: Partial<GenericPointLayerShaderConfig>,
@@ -101,6 +124,7 @@ const isFiniteNumber = (value: unknown): value is number =>
  */
 export class GenericPointLayer<TPoint extends BasePointRecord> {
   public readonly primitive: Primitive;
+  public readonly drawOrder: number;
 
   private readonly pointLayer: CesiumPointTextureLayer<TPoint, GenericPreparedPoint>;
   private readonly defaultAltitudeMeters: number;
@@ -112,14 +136,16 @@ export class GenericPointLayer<TPoint extends BasePointRecord> {
 
   public constructor(
     points: readonly TPoint[] = [],
-    descriptor: GenericPointLayerDescriptor,
     options: GenericPointLayerOptions,
   ) {
+    this.drawOrder = options.drawOrder ?? 0;
+    const resolvedDescriptor = this.resolveDescriptor(options);
     this.defaultAltitudeMeters = options.defaultAltitudeMeters ?? DEFAULT_POINT_ALTITUDE_METERS;
     this.defaultHeadingRadians = options.defaultHeadingRadians ?? DEFAULT_POINT_HEADING_RADIANS;
     this.enableAnimation = options.enableAnimation ?? true;
-    this.cullDotThreshold = descriptor.cullDotThreshold ?? DEFAULT_POINT_CULL_DOT_THRESHOLD;
-    this.pointLayer = this.createPointLayer(descriptor, options);
+    this.cullDotThreshold =
+      resolvedDescriptor.cullDotThreshold ?? DEFAULT_POINT_CULL_DOT_THRESHOLD;
+    this.pointLayer = this.createPointLayer(resolvedDescriptor, options);
     this.pointLayer.setRecords(points);
     this.primitive = this.pointLayer.primitive;
   }
@@ -145,11 +171,14 @@ export class GenericPointLayer<TPoint extends BasePointRecord> {
     options: GenericPointLayerOptions,
   ): CesiumPointTextureLayer<TPoint, GenericPreparedPoint> {
     const enableAnimation = options.enableAnimation ?? true;
+    const resolvedAttributeName = descriptor.attributeName ?? `a_${normalizeTextureName(
+      options.textureName ?? options.name ?? DEFAULT_TEXTURE_NAME,
+    )}${DEFAULT_ATTRIBUTE_NAME_SUFFIX}`;
     const shaderConfig = resolveShaderConfig(descriptor.shaderConfig);
     const shaders =
       descriptor.shaders ??
       buildPointShaders({
-        attributeName: descriptor.attributeName,
+        attributeName: resolvedAttributeName,
         dataTextureUniform: shaderConfig.dataTextureUniform,
         dataTextureDimensionsUniform: shaderConfig.dataTextureDimensionsUniform,
         spriteTextureUniform: shaderConfig.spriteTextureUniform,
@@ -171,12 +200,17 @@ export class GenericPointLayer<TPoint extends BasePointRecord> {
     };
 
     const layerDescriptor: CesiumGpuPointLayerDescriptor<TPoint, GenericPreparedPoint> = {
-      name: descriptor.name,
+      name: descriptor.name ?? DEFAULT_LAYER_NAME,
       shaders,
       uniforms: cesiumUniforms,
-      indexAttributeName: descriptor.attributeName,
-      indexAttributeLocation: descriptor.indexAttributeLocation,
-      boundingSphere: descriptor.boundingSphere,
+      indexAttributeName: resolvedAttributeName,
+      indexAttributeLocation: descriptor.indexAttributeLocation ?? DEFAULT_ATTRIBUTE_INDEX,
+      boundingSphere:
+        descriptor.boundingSphere ??
+        new Cesium.BoundingSphere(
+          Cesium.Cartesian3.ZERO,
+          Cesium.Ellipsoid.WGS84.maximumRadius + 1_000_000,
+        ),
       options: {
         pointScale: options.pointScale ?? DEFAULT_POINT_SCALE,
         minPointSize: options.minPointSize ?? DEFAULT_MIN_POINT_SIZE,
@@ -267,6 +301,43 @@ export class GenericPointLayer<TPoint extends BasePointRecord> {
       directionY,
       timestampSeconds: this.motionAnchorSeconds,
       directionFromEarthCenter,
+    };
+  }
+
+  private resolveDescriptor(
+    options: GenericPointLayerOptions,
+  ): GenericPointLayerDescriptor {
+    const normalizedTextureName = normalizeTextureName(
+      options.textureName ?? options.name ?? DEFAULT_TEXTURE_NAME,
+    );
+    const prefix = `u_${normalizedTextureName}`;
+
+    return {
+      name: options.name ?? DEFAULT_LAYER_NAME,
+      attributeName:
+        options.attributeName ?? `a_${normalizedTextureName}${DEFAULT_ATTRIBUTE_NAME_SUFFIX}`,
+      indexAttributeLocation: options.indexAttributeLocation ?? DEFAULT_ATTRIBUTE_INDEX,
+      boundingSphere: options.boundingSphere ?? DEFAULT_BOUNDING_SPHERE,
+      cullDotThreshold: options.cullDotThreshold,
+      headingOffsetRadians: options.headingOffsetRadians,
+      shaderConfig: {
+        ...resolveShaderConfig(options.shaderConfig),
+        dataTextureUniform: options.shaderConfig?.dataTextureUniform ?? `${prefix}Texture`,
+        dataTextureDimensionsUniform:
+          options.shaderConfig?.dataTextureDimensionsUniform ?? `${prefix}TextureDimensions`,
+        spriteTextureUniform:
+          options.shaderConfig?.spriteTextureUniform ?? DEFAULT_POINT_SHADER_CONFIG.spriteTextureUniform,
+        motionTextureUniform:
+          options.shaderConfig?.motionTextureUniform ?? `${prefix}MotionTexture`,
+        nowSecondsUniform:
+          options.shaderConfig?.nowSecondsUniform ?? DEFAULT_POINT_SHADER_CONFIG.nowSecondsUniform,
+        maxExtrapolationSecondsUniform:
+          options.shaderConfig?.maxExtrapolationSecondsUniform ??
+          DEFAULT_POINT_SHADER_CONFIG.maxExtrapolationSecondsUniform,
+        rotationEnabledUniform:
+          options.shaderConfig?.rotationEnabledUniform ??
+          DEFAULT_POINT_SHADER_CONFIG.rotationEnabledUniform,
+      },
     };
   }
 }

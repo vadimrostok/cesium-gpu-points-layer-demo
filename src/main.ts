@@ -2,9 +2,9 @@ import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import './styles.css';
 import Stats from 'stats.js';
-import { createPlaygroundLayers } from './layers';
-import { isGlobeResponse, toLayerPoints } from './globe-data';
-import type { GlobeResponse } from './globe-data';
+import { isGlobeResponse, toLayerPoints, type GlobeResponse } from './globe-data';
+import { GenericPointLayer } from './cesium/generic-point-layer';
+import type { BasePointRecord } from './cesium/gpu-point-layer';
 
 const STATUS_MESSAGE_ID = 'gpu-playground-status';
 const HUD_ID = 'gpu-playground-hud';
@@ -75,7 +75,71 @@ const mount = async (): Promise<void> => {
   };
   viewer.scene.postRender.addEventListener(onPostRender);
 
-  const { updatePoints } = createPlaygroundLayers(viewer);
+  const planeLayer = new GenericPointLayer<BasePointRecord>([], {
+    name: 'PlaneLayer',
+    textureName: 'plane',
+    headingOffsetRadians: -Math.PI / 2,
+    sprite: {
+      url: '/svgs/medium-plane-2.svg',
+      width: 80,
+      height: 80,
+      resolution: 2,
+    },
+    pointScale: 70_000_000,
+    minPointSize: 30,
+    maxPointSize: 128,
+    maxExtrapolationSeconds: 60 * 60 * 24 * 365,
+    defaultAltitudeMeters: 500,
+    drawOrder: 2,
+  });
+  const shipLayer = new GenericPointLayer<BasePointRecord>([], {
+    name: 'ShipLayer',
+    textureName: 'ship',
+    sprite: {
+      url: '/svgs/ship.svg',
+      width: 96,
+      height: 96,
+      resolution: 2,
+    },
+    pointScale: 40_000_000,
+    rotateToHeading: false,
+    enableAnimation: false,
+    drawOrder: 1,
+  });
+  const earthquakeLayer = new GenericPointLayer<BasePointRecord>([], {
+    name: 'EarthquakeLayer',
+    textureName: 'earthquake',
+    sprite: {
+      url: '/svgs/earthquake.svg',
+      width: 80,
+      height: 80,
+      resolution: 2,
+    },
+    pointScale: 40_000_000,
+    minPointSize: 128,
+    maxPointSize: 256,
+    rotateToHeading: false,
+    enableAnimation: false,
+    drawOrder: 0,
+  });
+
+  const playgroundLayers = [earthquakeLayer, shipLayer, planeLayer].slice().sort((left, right) => {
+    return left.drawOrder - right.drawOrder;
+  });
+  for (const layer of playgroundLayers) {
+    viewer.scene.primitives.add(layer.primitive);
+  }
+
+  const updatePoints = (data: {
+    planes: BasePointRecord[];
+    ships: BasePointRecord[];
+    earthquakes: BasePointRecord[];
+  }): void => {
+    planeLayer.setRecords(data.planes);
+    shipLayer.setRecords(data.ships);
+    earthquakeLayer.setRecords(data.earthquakes);
+  };
+
   viewer.camera.setView({
     destination: Cesium.Cartesian3.fromDegrees(10, 28, 20_000_000),
   });
