@@ -3,7 +3,7 @@ import 'cesium/Build/Cesium/Widgets/widgets.css';
 import './styles.css';
 import Stats from 'stats.js';
 import { isPreparedGlobePoints, type PreparedGlobePoints } from './globe-data';
-import { GpuPointLayer, type BasePointRecord } from './cesium/gpu-point-layer';
+import { GpuPointLayer, type BasePointRecord } from 'cesium-gpu-points-layer';
 
 const STATUS_MESSAGE_ID = 'gpu-playground-status';
 const HUD_ID = 'gpu-playground-hud';

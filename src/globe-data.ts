@@ -1,4 +1,4 @@
-import type { BasePointRecord } from './cesium/gpu-point-layer';
+import type { BasePointRecord } from 'cesium-gpu-points-layer';
 
 interface RawDirection {
   x?: number | null;

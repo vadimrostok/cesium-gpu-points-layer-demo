@@ -1,11 +1,14 @@
 {
-  "name": "gpu-dots-layer-playground",
+  "name": "cesium-gpu-points-layer-demo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "build:lib": "npm --prefix ../cesium-gpu-points-layer run build",
     "build": "vite build",
+    "predev": "npm run build:lib",
+    "prebuild": "npm run build:lib",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "start": "start .",
     "fetch:be-response": "node scripts/fetch-be-response.mjs",
@@ -14,6 +17,7 @@
   },
   "dependencies": {
     "cesium": "^1.139.0",
+    "cesium-gpu-points-layer": "file:../cesium-gpu-points-layer",
     "stats.js": "^0.17.0"
   },
   "devDependencies": {
