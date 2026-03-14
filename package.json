@@ -12,7 +12,8 @@
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
-    "cesium": "^1.139.0"
+    "cesium": "^1.139.0",
+    "stats.js": "^0.17.0"
   },
   "devDependencies": {
     "start": "^5.0.0",

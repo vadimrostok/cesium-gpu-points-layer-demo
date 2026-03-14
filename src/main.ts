@@ -1,11 +1,13 @@
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import './styles.css';
+import Stats from 'stats.js';
 import { createPlaygroundLayers } from './layers';
 import { isGlobeResponse, toLayerPoints } from './globe-data';
 import type { GlobeResponse } from './globe-data';
 
 const STATUS_MESSAGE_ID = 'gpu-playground-status';
+const HUD_ID = 'gpu-playground-hud';
 
 const mount = async (): Promise<void> => {
   const host = document.getElementById('app');
@@ -13,11 +15,24 @@ const mount = async (): Promise<void> => {
     throw new Error('Root app container is missing.');
   }
 
+  const hudEl = document.createElement('div');
+  hudEl.id = HUD_ID;
+  hudEl.className = 'gpu-playground-hud';
+  host.appendChild(hudEl);
+
+  const fpsCounter = new Stats();
+  fpsCounter.showPanel(0);
+  fpsCounter.dom.id = 'gpu-playground-fps';
+  fpsCounter.dom.className = 'gpu-playground-stats';
+  fpsCounter.dom.style.position = 'static';
+  fpsCounter.dom.style.pointerEvents = 'none';
+  hudEl.appendChild(fpsCounter.dom);
+
   const statusEl = document.createElement('div');
   statusEl.id = STATUS_MESSAGE_ID;
   statusEl.className = 'gpu-playground-status';
   statusEl.textContent = 'loading snapshot...';
-  host.appendChild(statusEl);
+  hudEl.appendChild(statusEl);
 
   const viewerHost = document.createElement('div');
   viewerHost.id = 'globe-host';
@@ -55,6 +70,11 @@ const mount = async (): Promise<void> => {
   viewer.clock.shouldAnimate = true;
   viewer.clock.multiplier = 1;
 
+  const onPostRender = (): void => {
+    fpsCounter.update();
+  };
+  viewer.scene.postRender.addEventListener(onPostRender);
+
   const { updatePoints } = createPlaygroundLayers(viewer);
   viewer.camera.setView({
     destination: Cesium.Cartesian3.fromDegrees(10, 28, 20_000_000),
@@ -86,6 +106,7 @@ const mount = async (): Promise<void> => {
   }
 
   const cleanup = (): void => {
+    viewer.scene.postRender.removeEventListener(onPostRender);
     viewer.destroy();
     window.removeEventListener('beforeunload', cleanup);
   };
