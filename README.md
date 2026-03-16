@@ -43,6 +43,18 @@ Library consumers only deal with already prepared records:
 - `rotationEnabled` toggles sprite rotation from heading.
 - `enableAnimation` toggles motion extrapolation driven by `speedMetersPerSecond` + `headingRadians`.
 
+## Rendering benchmarks
+> 34833 points: aircraft 6559, ships 28264, earthquakes 10; Images based on SVG sources.
+
+| Setting | Scenario | Improvement (low-high fps) | Billboards | GPU dots    |
+| --- | --- |----------------------------| --- |-------------|
+| high / no throttling | static | `27.7% - 17.5%`            | `36-40 fps` | `46-47 fps` |
+| high / no throttling | moving | `33.3% - 30.3%`            | `30-33 fps` | `40-43 fps` |
+| high / no throttling | scrolling in and out (Europe) | `38.4% - 11.1%`            | `26-45 fps` | `36-50 fps` |
+| high / CPU throttling x6 | static | `53% - 51.6%`              | `30-31 fps` | `46-47 fps` |
+| high / CPU throttling x6 | moving | `16.6% - 90.9%`            | `21-22 fps` | `38-42 fps` |
+| high / CPU throttling x6 | scrolling in-out | `62.5% - 61.9%`            | `16-21 fps` | `26-34 fps` |
+
 ## Library wiring (demo + lib split)
 
 The demo consumes the reusable package from npm:

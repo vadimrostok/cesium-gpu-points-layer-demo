@@ -10,7 +10,6 @@ export interface LayerDefinition {
   spritePath: string;
   spriteWidth: number;
   spriteHeight: number;
-  spriteResolution: number;
   pointScale: number;
   minPointSize?: number;
   maxPointSize?: number;
@@ -36,7 +35,6 @@ export interface BillboardRendererOptions {
   viewer: Cesium.Viewer;
   assetUrl: (path: string) => string;
   definitions: ReadonlyArray<LayerDefinition>;
-  scaleMultiplier?: number;
 }
 
 const EARTH_RADIUS_METERS = Cesium.Ellipsoid.WGS84.maximumRadius;
@@ -154,7 +152,7 @@ export class BillboardRenderer {
         disableDepthTestDistance: 0,
         alignedAxis: Cesium.Cartesian3.ZERO,
         rotation: definition.rotationEnabled ? heading + rotationOffset : 0,
-        scaleByDistance: new Cesium.NearFarScalar(1_000_000, 0.75, 10_000_000, 0.2),
+        scaleByDistance: new Cesium.NearFarScalar(1_150_000, 0.5, 4_333_000, 0.1),
       });
 
       const state: BillboardMotionState = {
@@ -198,6 +196,8 @@ export class BillboardRenderer {
           Cesium.Ellipsoid.WGS84,
           this.animatedCartesianScratch,
         );
+        // Cloning without changing `state.billboard.position` is not working.
+        // state.billboard.position.clone(this.animatedCartesianScratch);
         state.billboard.position = Cesium.Cartesian3.clone(this.animatedCartesianScratch);
       }
     }

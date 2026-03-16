@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "cesium": "^1.139.0",
-    "cesium-gpu-points-layer": "^0.3.1",
+    "cesium-gpu-points-layer": "^0.3.3",
     "stats.js": "^0.17.0"
   },
   "devDependencies": {

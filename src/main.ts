@@ -10,11 +10,39 @@ const STATUS_MESSAGE_ID = 'gpu-playground-status';
 const HUD_ID = 'gpu-playground-hud';
 
 type RenderMode = 'gpu' | 'billboard';
+type PerformanceMode = 'high' | 'mid' | 'low';
+
+interface PerformanceProfile {
+  resolutionScale: number;
+  maximumScreenSpaceError: number;
+  pointSizeScale: number;
+}
+
+const DEFAULT_MIN_POINT_SIZE = 30;
+const DEFAULT_MAX_POINT_SIZE = 128;
 
 interface GpuLayerHandle {
   type: RecordType;
   layer: GpuPointLayer<BasePointRecord>;
 }
+
+const PERFORMANCE_PROFILES: Record<PerformanceMode, PerformanceProfile> = {
+  high: {
+    resolutionScale: window.devicePixelRatio || 1,
+    maximumScreenSpaceError: 1,
+    pointSizeScale: window.devicePixelRatio || 1,
+  },
+  mid: {
+    resolutionScale: 1,
+    maximumScreenSpaceError: 2,
+    pointSizeScale: 1,
+  },
+  low: {
+    resolutionScale: 0.5,
+    maximumScreenSpaceError: 4,
+    pointSizeScale: 0.5,
+  },
+};
 
 const LAYERS: Array<LayerDefinition> = [
   {
@@ -22,9 +50,8 @@ const LAYERS: Array<LayerDefinition> = [
     label: 'EarthquakeLayer',
     textureName: 'earthquake',
     spritePath: 'svgs/earthquake.svg',
-    spriteWidth: 80,
-    spriteHeight: 80,
-    spriteResolution: 2,
+    spriteWidth: 256,
+    spriteHeight: 256,
     pointScale: 40_000_000,
     minPointSize: 128,
     maxPointSize: 256,
@@ -39,10 +66,11 @@ const LAYERS: Array<LayerDefinition> = [
     label: 'ShipLayer',
     textureName: 'ship',
     spritePath: 'svgs/ship.svg',
-    spriteWidth: 96,
-    spriteHeight: 96,
-    spriteResolution: 2,
-    pointScale: 40_000_000,
+    spriteWidth: 192,
+    spriteHeight: 192,
+    pointScale: 100_000_000,
+    minPointSize: 30,
+    maxPointSize: 192,
     rotationEnabled: false,
     enableAnimation: false,
     headingOffsetRadians: 0,
@@ -54,9 +82,8 @@ const LAYERS: Array<LayerDefinition> = [
     label: 'PlaneLayer',
     textureName: 'plane',
     spritePath: 'svgs/medium-plane-2.svg',
-    spriteWidth: 80,
-    spriteHeight: 80,
-    spriteResolution: 2,
+    spriteWidth: 128,
+    spriteHeight: 128,
     pointScale: 70_000_000,
     minPointSize: 30,
     maxPointSize: 128,
@@ -104,6 +131,27 @@ const mount = async (): Promise<void> => {
   modeSelector.value = 'gpu';
   controlRow.appendChild(modeSelector);
 
+  const performanceLabel = document.createElement('label');
+  performanceLabel.textContent = 'Performance';
+  performanceLabel.setAttribute('for', 'gpu-playground-performance-mode');
+  controlRow.appendChild(performanceLabel);
+
+  const performanceSelector = document.createElement('select');
+  performanceSelector.id = 'gpu-playground-performance-mode';
+  performanceSelector.className = 'gpu-playground-select';
+  const highPerformanceOption = document.createElement('option');
+  highPerformanceOption.value = 'high';
+  highPerformanceOption.textContent = 'high';
+  const midPerformanceOption = document.createElement('option');
+  midPerformanceOption.value = 'mid';
+  midPerformanceOption.textContent = 'mid';
+  const lowPerformanceOption = document.createElement('option');
+  lowPerformanceOption.value = 'low';
+  lowPerformanceOption.textContent = 'low';
+  performanceSelector.append(highPerformanceOption, midPerformanceOption, lowPerformanceOption);
+  performanceSelector.value = 'high';
+  controlRow.appendChild(performanceSelector);
+
   const statusEl = document.createElement('div');
   statusEl.id = STATUS_MESSAGE_ID;
   statusEl.className = 'gpu-playground-status';
@@ -138,8 +186,7 @@ const mount = async (): Promise<void> => {
     msaaSamples: 2,
   });
 
-  viewer.resolutionScale = 1;
-  viewer.scene.globe.maximumScreenSpaceError = 1.5;
+  viewer.scene.globe.maximumScreenSpaceError = PERFORMANCE_PROFILES.high.maximumScreenSpaceError;
   viewer.scene.globe.depthTestAgainstTerrain = false;
   viewer.scene.screenSpaceCameraController.enableTilt = true;
   viewer.scene.screenSpaceCameraController.enableZoom = true;
@@ -170,8 +217,20 @@ const mount = async (): Promise<void> => {
     definitions: sortedLayerDefinitions,
   });
 
-  const gpuLayers: Array<GpuLayerHandle> = sortedLayerDefinitions
-    .map((definition: LayerDefinition): GpuLayerHandle => {
+  const scalePointSize = (value: number, scale: number): number =>
+    Math.max(1, Math.round(value * scale));
+
+  const createGpuLayers = (profile: PerformanceProfile): Array<GpuLayerHandle> =>
+    sortedLayerDefinitions.map((definition: LayerDefinition): GpuLayerHandle => {
+      const minPointSize = scalePointSize(
+        definition.minPointSize ?? DEFAULT_MIN_POINT_SIZE,
+        profile.pointSizeScale,
+      );
+      const maxPointSize = scalePointSize(
+        definition.maxPointSize ?? DEFAULT_MAX_POINT_SIZE,
+        profile.pointSizeScale,
+      );
+
       const layer = new GpuPointLayer<BasePointRecord>([], {
         name: definition.label,
         textureName: definition.textureName,
@@ -180,11 +239,10 @@ const mount = async (): Promise<void> => {
           url: assetUrl(definition.spritePath),
           width: definition.spriteWidth,
           height: definition.spriteHeight,
-          resolution: definition.spriteResolution,
         },
         pointScale: definition.pointScale,
-        minPointSize: definition.minPointSize,
-        maxPointSize: definition.maxPointSize,
+        minPointSize,
+        maxPointSize,
         rotationEnabled: definition.rotationEnabled,
         enableAnimation: definition.enableAnimation,
         maxExtrapolationSeconds: 60 * 60 * 24 * 365,
@@ -192,14 +250,40 @@ const mount = async (): Promise<void> => {
         drawOrder: definition.drawOrder,
       });
       viewer.scene.primitives.add(layer.primitive);
-      layer.primitive.show = true;
       return { type: definition.type, layer };
     });
 
-  const getGPUHandle = (type: RecordType): GpuLayerHandle | undefined =>
-    gpuLayers.find((entry) => entry.type === type);
+  let gpuLayers = createGpuLayers(PERFORMANCE_PROFILES.high);
+  viewer.resolutionScale = PERFORMANCE_PROFILES.high.resolutionScale;
+  for (const handle of gpuLayers) {
+    handle.layer.primitive.show = true;
+  }
 
   let activeRenderMode: RenderMode = 'gpu';
+  let activePerformanceMode: PerformanceMode = 'high';
+
+  const applyPerformanceMode = (mode: PerformanceMode): void => {
+    activePerformanceMode = mode;
+    const profile = PERFORMANCE_PROFILES[mode];
+    viewer.resolutionScale = profile.resolutionScale;
+    viewer.scene.globe.maximumScreenSpaceError = profile.maximumScreenSpaceError;
+
+    const previousLayers = gpuLayers;
+    const recordMap = new Map(activeRecords);
+    for (const previous of previousLayers) {
+      viewer.scene.primitives.remove(previous.layer.primitive);
+      previous.layer.destroy();
+    }
+
+    gpuLayers = createGpuLayers(profile);
+
+    for (const handle of gpuLayers) {
+      const records = recordMap.get(handle.type) ?? [];
+      handle.layer.setRecords(records);
+      handle.layer.primitive.show = activeRenderMode === 'gpu';
+    }
+    setRendererMode(activeRenderMode);
+  };
 
   const setRendererMode = (mode: RenderMode): void => {
     activeRenderMode = mode;
@@ -222,6 +306,9 @@ const mount = async (): Promise<void> => {
 
   modeSelector.addEventListener('change', () => {
     setRendererMode(modeSelector.value as RenderMode);
+  });
+  performanceSelector.addEventListener('change', () => {
+    applyPerformanceMode(performanceSelector.value as PerformanceMode);
   });
 
   const onPostRender = (): void => {
@@ -250,14 +337,19 @@ const mount = async (): Promise<void> => {
     const groupedRecords = getRecords(payload);
     activeRecords.clear();
     for (const [type, records] of groupedRecords.entries()) {
-      activeRecords.set(type, records);
-      const gpuLayer = getGPUHandle(type);
-      if (gpuLayer) {
-        gpuLayer.layer.setRecords(records);
+      let tinyCounter = 0;
+      const step = 200/records.length;
+      for (const record of records) {
+        // Reduce flickering over massive overlaps at some zoom levels
+        record.altitudeMeters ??= 0;
+        record.altitudeMeters += tinyCounter;
+        tinyCounter += step;
       }
+      activeRecords.set(type, records);
     }
 
     billboardRenderer.setRecords(groupedRecords);
+    applyPerformanceMode(activePerformanceMode);
     setRendererMode(activeRenderMode);
   };
 

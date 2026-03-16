@@ -55,6 +55,9 @@ body,
   padding: 6px 10px;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.45);
+  color: white;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-size: 12px;
 }
 
 .gpu-playground-select {
