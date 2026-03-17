@@ -8,6 +8,7 @@ import { GpuPointLayer, type BasePointRecord } from 'cesium-gpu-points-layer';
 
 const STATUS_MESSAGE_ID = 'gpu-playground-status';
 const HUD_ID = 'gpu-playground-hud';
+const DEFAULT_TIME_SPEED = 1;
 
 type RenderMode = 'gpu' | 'billboard';
 type PerformanceMode = 'high' | 'mid' | 'low';
@@ -21,10 +22,22 @@ interface PerformanceProfile {
 const DEFAULT_MIN_POINT_SIZE = 30;
 const DEFAULT_MAX_POINT_SIZE = 128;
 
+interface TimeSpeedOption {
+  label: string;
+  value: number;
+}
+
 interface GpuLayerHandle {
   type: RecordType;
   layer: GpuPointLayer<BasePointRecord>;
 }
+
+const TIME_SPEED_OPTIONS: ReadonlyArray<TimeSpeedOption> = [
+  { label: 'x1', value: 1 },
+  { label: 'x100', value: 100 },
+  { label: 'x1000', value: 1_000 },
+  { label: 'x10000', value: 10_000 },
+];
 
 const PERFORMANCE_PROFILES: Record<PerformanceMode, PerformanceProfile> = {
   high: {
@@ -152,6 +165,25 @@ const mount = async (): Promise<void> => {
   performanceSelector.value = 'high';
   controlRow.appendChild(performanceSelector);
 
+  const timeSpeedLabel = document.createElement('label');
+  timeSpeedLabel.textContent = 'Time speed';
+  timeSpeedLabel.setAttribute('for', 'gpu-playground-time-speed');
+  controlRow.appendChild(timeSpeedLabel);
+
+  const timeSpeedSelector = document.createElement('select');
+  timeSpeedSelector.id = 'gpu-playground-time-speed';
+  timeSpeedSelector.className = 'gpu-playground-select';
+  for (const option of TIME_SPEED_OPTIONS) {
+    const optionElement = document.createElement('option');
+    optionElement.value = String(option.value);
+    optionElement.textContent = option.label;
+    if (option.value === DEFAULT_TIME_SPEED) {
+      optionElement.selected = true;
+    }
+    timeSpeedSelector.appendChild(optionElement);
+  }
+  controlRow.appendChild(timeSpeedSelector);
+
   const statusEl = document.createElement('div');
   statusEl.id = STATUS_MESSAGE_ID;
   statusEl.className = 'gpu-playground-status';
@@ -200,6 +232,15 @@ const mount = async (): Promise<void> => {
   viewer.scene.requestRenderMode = false;
   viewer.clock.shouldAnimate = true;
   viewer.clock.multiplier = 1;
+  const getWallClockSeconds = (): number => performance.now() / 1000;
+  let timeSpeedMultiplier = DEFAULT_TIME_SPEED;
+  let playbackStartWallSeconds = getWallClockSeconds();
+  let playbackScaledSeconds = 0;
+
+  const getScaledElapsedSeconds = (): number => {
+    const wallElapsed = getWallClockSeconds() - playbackStartWallSeconds;
+    return playbackScaledSeconds + wallElapsed * timeSpeedMultiplier;
+  };
 
   const sortedLayerDefinitions = [...LAYERS].sort((left, right) => left.drawOrder - right.drawOrder);
   const activeRecords = new Map<RecordType, Array<BasePointRecord>>();
@@ -282,6 +323,12 @@ const mount = async (): Promise<void> => {
       handle.layer.setRecords(records);
       handle.layer.primitive.show = activeRenderMode === 'gpu';
     }
+    for (const handle of gpuLayers) {
+      const primitive = handle.layer.primitive as typeof handle.layer.primitive & {
+        getNowSeconds: () => number;
+      }
+      primitive.getNowSeconds = () => getScaledElapsedSeconds();
+    }
     setRendererMode(activeRenderMode);
   };
 
@@ -310,14 +357,35 @@ const mount = async (): Promise<void> => {
   performanceSelector.addEventListener('change', () => {
     applyPerformanceMode(performanceSelector.value as PerformanceMode);
   });
+  const setTimeSpeed = (multiplier: number): void => {
+    if (!Number.isFinite(multiplier) || multiplier <= 0) {
+      return;
+    }
+    const currentScaled = getScaledElapsedSeconds();
+    timeSpeedMultiplier = multiplier;
+    playbackStartWallSeconds = getWallClockSeconds();
+    playbackScaledSeconds = currentScaled;
+    for (const handle of gpuLayers) {
+      const primitive = handle.layer.primitive as typeof handle.layer.primitive & {
+        getNowSeconds: () => number;
+      }
+      primitive.getNowSeconds = () => getScaledElapsedSeconds();
+    }
+  };
+  timeSpeedSelector.addEventListener('change', () => {
+    const selected = Number(timeSpeedSelector.value);
+    setTimeSpeed(selected);
+  });
 
   const onPostRender = (): void => {
     fpsCounter.update();
     if (activeRenderMode === 'billboard') {
-      billboardRenderer.update();
+      const timeScaledElapsedSeconds = getScaledElapsedSeconds();
+      billboardRenderer.update(timeScaledElapsedSeconds);
     }
   };
   viewer.scene.preRender.addEventListener(onPostRender);
+  setTimeSpeed(DEFAULT_TIME_SPEED);
 
   viewer.camera.setView({
     destination: Cesium.Cartesian3.fromDegrees(10, 28, 20_000_000),

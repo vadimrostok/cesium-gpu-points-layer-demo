@@ -20,6 +20,11 @@ export interface LayerDefinition {
   drawOrder: number;
 }
 
+type BillboardRecord = BasePointRecord & {
+  directionX?: number;
+  directionY?: number;
+};
+
 interface BillboardMotionState {
   billboard: Cesium.Billboard;
   baseLatitude: number;
@@ -49,10 +54,9 @@ export class BillboardRenderer {
   private readonly viewer: Cesium.Viewer;
   private readonly definitions: Array<LayerDefinition>;
   private readonly assetUrl: (path: string) => string;
-  private readonly playbackStartSeconds = performance.now() / 1000;
 
   private readonly collectionByType = new Map<RecordType, Cesium.BillboardCollection>();
-  private readonly recordsByType = new Map<RecordType, Array<BasePointRecord>>();
+  private readonly recordsByType = new Map<RecordType, Array<BillboardRecord>>();
   private readonly statesByType = new Map<RecordType, Array<BillboardMotionState>>();
   private readonly allStates: Array<BillboardMotionState> = [];
 
@@ -88,7 +92,7 @@ export class BillboardRenderer {
   public setRecords(recordsByType: ReadonlyMap<RecordType, Array<BasePointRecord>>): void {
     this.recordsByType.clear();
     for (const [type, records] of recordsByType.entries()) {
-      this.recordsByType.set(type, [...records]);
+      this.recordsByType.set(type, [...records] as Array<BillboardRecord>);
     }
     this.syncAll();
   }
@@ -130,11 +134,27 @@ export class BillboardRenderer {
         : definition.defaultAltitudeMeters;
       const speedMetersPerSecond =
         definition.enableAnimation && isFinitePositive(record.speedMetersPerSecond)
-          && hasHeading
           ? record.speedMetersPerSecond
           : 0;
-      const directionX = speedMetersPerSecond > 0 && hasHeading ? Math.cos(headingNormalized) : 0;
-      const directionY = speedMetersPerSecond > 0 && hasHeading ? Math.sin(headingNormalized) : 0;
+
+      const directionRecordX = isFiniteNumber((record as BillboardRecord).directionX)
+        ? ((record as BillboardRecord).directionX ?? 0)
+        : 0;
+      const directionRecordY = isFiniteNumber((record as BillboardRecord).directionY)
+        ? ((record as BillboardRecord).directionY ?? 0)
+        : 0;
+      const hasExplicitDirection = Math.hypot(directionRecordX, directionRecordY) > 0;
+      const directionScale = hasExplicitDirection
+        ? 1 / Math.hypot(directionRecordX, directionRecordY)
+        : 0;
+      // directionX is north, directionY is east, matching GPU directionX/directionY packing.
+      const directionX = hasExplicitDirection ? directionRecordX * directionScale : hasHeading
+        ? Math.cos(headingNormalized)
+        : 0;
+      const directionY = hasExplicitDirection ? directionRecordY * directionScale : hasHeading
+        ? Math.sin(headingNormalized)
+        : 0;
+      const hasMotion = speedMetersPerSecond > 0 && (hasHeading || hasExplicitDirection);
 
       const position = Cesium.Cartesian3.fromDegrees(
         record.longitude,
@@ -163,32 +183,66 @@ export class BillboardRenderer {
         directionX,
         directionY,
         headingRadians: headingNormalized,
-        speedMetersPerSecond,
+        speedMetersPerSecond: hasMotion ? speedMetersPerSecond : 0,
       };
       states.push(state);
       billboard.show = true;
     }
   }
 
-  public update(): void {
-    const elapsedSeconds = performance.now() / 1000 - this.playbackStartSeconds;
-
+  public update(elapsedSeconds: number): void {
     for (const state of this.allStates) {
       if (state.speedMetersPerSecond > 0 && elapsedSeconds > 0) {
         const traveledMeters = state.speedMetersPerSecond * elapsedSeconds;
-        const latitude = Cesium.Math.clamp(
-          state.baseLatitude +
-            (state.directionY * traveledMeters) / EARTH_RADIUS_METERS,
-          -Math.PI / 2,
-          Math.PI / 2,
-        );
-        const longitude =
-          state.baseLongitude +
-          (state.directionX * traveledMeters) /
-            (EARTH_RADIUS_METERS * Math.max(Math.cos(state.baseLatitude), 1e-6));
+        if (traveledMeters <= 0) {
+          continue;
+        }
+        if (state.directionX === 0 && state.directionY === 0) {
+          continue;
+        }
 
-        this.animatedPositionScratch.longitude = Cesium.Math.zeroToTwoPi(longitude);
-        this.animatedPositionScratch.latitude = latitude;
+        const traveledAngularDistance = traveledMeters / EARTH_RADIUS_METERS;
+        const angularDistanceSin = Math.sin(traveledAngularDistance);
+        const angularDistanceCos = Math.cos(traveledAngularDistance);
+
+        const baseLatitude = state.baseLatitude;
+        const baseLongitude = state.baseLongitude;
+        const baseSinLatitude = Math.sin(baseLatitude);
+        const baseCosLatitude = Math.cos(baseLatitude);
+        const baseSinLongitude = Math.sin(baseLongitude);
+        const baseCosLongitude = Math.cos(baseLongitude);
+
+        const baseNormalX = baseCosLatitude * baseCosLongitude;
+        const baseNormalY = baseCosLatitude * baseSinLongitude;
+        const baseNormalZ = baseSinLatitude;
+
+        const eastUnitX = -baseSinLongitude;
+        const eastUnitY = baseCosLongitude;
+        const eastUnitZ = 0;
+
+        const northUnitX = -baseSinLatitude * baseCosLongitude;
+        const northUnitY = -baseSinLatitude * baseSinLongitude;
+        const northUnitZ = baseCosLatitude;
+
+        const directionX = northUnitX * state.directionY + eastUnitX * state.directionX;
+        const directionY = northUnitY * state.directionY + eastUnitY * state.directionX;
+        const directionZ = northUnitZ * state.directionY + eastUnitZ * state.directionX;
+        const directionLength = Math.hypot(directionX, directionY, directionZ);
+        if (directionLength <= 0) {
+          continue;
+        }
+        const directionUnitX = directionX / directionLength;
+        const directionUnitY = directionY / directionLength;
+        const directionUnitZ = directionZ / directionLength;
+
+        const nextNormalX = baseNormalX * angularDistanceCos + directionUnitX * angularDistanceSin;
+        const nextNormalY = baseNormalY * angularDistanceCos + directionUnitY * angularDistanceSin;
+        const nextNormalZ = baseNormalZ * angularDistanceCos + directionUnitZ * angularDistanceSin;
+
+        this.animatedPositionScratch.longitude = Cesium.Math.zeroToTwoPi(
+          Math.atan2(nextNormalY, nextNormalX),
+        );
+        this.animatedPositionScratch.latitude = Math.asin(Cesium.Math.clamp(nextNormalZ, -1, 1));
         this.animatedPositionScratch.height = state.altitudeMeters;
 
         Cesium.Cartographic.toCartesian(
