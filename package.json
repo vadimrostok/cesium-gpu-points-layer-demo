@@ -12,11 +12,12 @@
     "fetch:be-response": "node scripts/fetch-be-response.mjs",
     "prepare:globe-points": "node scripts/prepare-globe-points.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "test:time-speedup": "node scripts/time-speedup.test.mjs"
+    "test:time-speedup": "node scripts/time-speedup.test.mjs",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "cesium": "^1.139.0",
-    "cesium-gpu-points-layer": "^0.3.4",
+    "cesium-gpu-points-layer": "^0.3.6",
     "stats.js": "^0.17.0"
   },
   "devDependencies": {

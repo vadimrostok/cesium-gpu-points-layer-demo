@@ -57,6 +57,41 @@ const PERFORMANCE_PROFILES: Record<PerformanceMode, PerformanceProfile> = {
   },
 };
 
+const PERFORMANCE_STORAGE_KEY = 'gpu-playground-performance';
+const ALIGN_WITH_GROUND_STORAGE_KEY = 'gpu-playground-align-with-ground';
+
+const readStorageValue = (key: string): string | null => {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeStorageValue = (key: string, value: string): void => {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // ignore storage failures so rendering still works when storage is unavailable
+  }
+};
+
+const readPerformanceMode = (): PerformanceMode => {
+  const storedValue = readStorageValue(PERFORMANCE_STORAGE_KEY);
+  return storedValue === 'mid' || storedValue === 'low' || storedValue === 'high'
+    ? storedValue
+    : 'high';
+};
+
+const readAlignWithGround = (): boolean => {
+  const storedValue = readStorageValue(ALIGN_WITH_GROUND_STORAGE_KEY);
+  return storedValue === 'on';
+};
+
+const writePerformanceMode = (mode: PerformanceMode): void => writeStorageValue(PERFORMANCE_STORAGE_KEY, mode);
+const writeAlignWithGround = (alignWithGround: boolean): void =>
+  writeStorageValue(ALIGN_WITH_GROUND_STORAGE_KEY, alignWithGround ? 'on' : 'off');
+
 const LAYERS: Array<LayerDefinition> = [
   {
     type: 'earthquake',
@@ -162,8 +197,32 @@ const mount = async (): Promise<void> => {
   lowPerformanceOption.value = 'low';
   lowPerformanceOption.textContent = 'low';
   performanceSelector.append(highPerformanceOption, midPerformanceOption, lowPerformanceOption);
-  performanceSelector.value = 'high';
+  performanceSelector.value = readPerformanceMode();
   controlRow.appendChild(performanceSelector);
+
+  const alignWithGroundControl = document.createElement('div');
+  alignWithGroundControl.style.display = 'flex';
+  alignWithGroundControl.style.alignItems = 'center';
+  alignWithGroundControl.style.gap = '8px';
+
+  const alignWithGroundLabel = document.createElement('label');
+  alignWithGroundLabel.textContent = 'Align with ground';
+  alignWithGroundLabel.setAttribute('for', 'gpu-playground-align-with-ground');
+  alignWithGroundControl.appendChild(alignWithGroundLabel);
+
+  const alignWithGroundSelector = document.createElement('select');
+  alignWithGroundSelector.id = 'gpu-playground-align-with-ground';
+  alignWithGroundSelector.className = 'gpu-playground-select';
+  const alignWithGroundOnOption = document.createElement('option');
+  alignWithGroundOnOption.value = 'on';
+  alignWithGroundOnOption.textContent = 'On';
+  const alignWithGroundOffOption = document.createElement('option');
+  alignWithGroundOffOption.value = 'off';
+  alignWithGroundOffOption.textContent = 'Off';
+  alignWithGroundSelector.append(alignWithGroundOnOption, alignWithGroundOffOption);
+  alignWithGroundSelector.value = readAlignWithGround() ? 'on' : 'off';
+  alignWithGroundControl.appendChild(alignWithGroundSelector);
+  controlRow.appendChild(alignWithGroundControl);
 
   const timeSpeedLabel = document.createElement('label');
   timeSpeedLabel.textContent = 'Time speed';
@@ -261,6 +320,9 @@ const mount = async (): Promise<void> => {
   const scalePointSize = (value: number, scale: number): number =>
     Math.max(1, Math.round(value * scale));
 
+  let activePerformanceMode: PerformanceMode = readPerformanceMode();
+  let activeAlignWithGround = readAlignWithGround();
+
   const createGpuLayers = (profile: PerformanceProfile): Array<GpuLayerHandle> =>
     sortedLayerDefinitions.map((definition: LayerDefinition): GpuLayerHandle => {
       const minPointSize = scalePointSize(
@@ -289,19 +351,20 @@ const mount = async (): Promise<void> => {
         maxExtrapolationSeconds: 60 * 60 * 24 * 365,
         defaultAltitudeMeters: definition.defaultAltitudeMeters,
         drawOrder: definition.drawOrder,
+        alignWithGround: activeAlignWithGround,
       });
       viewer.scene.primitives.add(layer.primitive);
       return { type: definition.type, layer };
     });
 
-  let gpuLayers = createGpuLayers(PERFORMANCE_PROFILES.high);
-  viewer.resolutionScale = PERFORMANCE_PROFILES.high.resolutionScale;
+  let gpuLayers = createGpuLayers(PERFORMANCE_PROFILES[activePerformanceMode]);
+  viewer.resolutionScale = PERFORMANCE_PROFILES[activePerformanceMode].resolutionScale;
   for (const handle of gpuLayers) {
     handle.layer.primitive.show = true;
   }
+  viewer.scene.globe.maximumScreenSpaceError = PERFORMANCE_PROFILES[activePerformanceMode].maximumScreenSpaceError;
 
   let activeRenderMode: RenderMode = 'gpu';
-  let activePerformanceMode: PerformanceMode = 'high';
 
   const applyPerformanceMode = (mode: PerformanceMode): void => {
     activePerformanceMode = mode;
@@ -339,6 +402,7 @@ const mount = async (): Promise<void> => {
     for (const handle of gpuLayers) {
       handle.layer.primitive.show = !useBillboard;
     }
+    alignWithGroundControl.hidden = useBillboard;
     billboardRenderer.setVisible(useBillboard);
 
     const totals = [
@@ -355,7 +419,14 @@ const mount = async (): Promise<void> => {
     setRendererMode(modeSelector.value as RenderMode);
   });
   performanceSelector.addEventListener('change', () => {
+    const mode = performanceSelector.value as PerformanceMode;
+    writePerformanceMode(mode);
     applyPerformanceMode(performanceSelector.value as PerformanceMode);
+  });
+  alignWithGroundSelector.addEventListener('change', () => {
+    activeAlignWithGround = alignWithGroundSelector.value === 'on';
+    writeAlignWithGround(activeAlignWithGround);
+    applyPerformanceMode(activePerformanceMode);
   });
   const setTimeSpeed = (multiplier: number): void => {
     if (!Number.isFinite(multiplier) || multiplier <= 0) {
