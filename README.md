@@ -9,8 +9,7 @@ The app renders three layers:
 - ships
 - earthquakes
 
-The layers are ordered by draw command so objects are drawn in this sequence:
-earthquakes → ships → planes.
+Use `entity multiplier` select in UI to produce over a million elements for rendering (`low` performance option is adviced unless you've got a jacked pc).
 
 ## Run
 
