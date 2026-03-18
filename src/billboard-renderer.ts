@@ -102,7 +102,15 @@ export class BillboardRenderer {
     for (const definition of this.definitions) {
       this.fillBillboardCollection(definition);
       const layerStates = this.statesByType.get(definition.type);
-      if (layerStates) {
+      if (!layerStates) {
+        continue;
+      }
+      if (layerStates.length > 100_000) {
+        // For some reason, pushing over 100k items with spread operator results in stack overflow exception.
+        for (let i = 0; i < Math.ceil(layerStates.length/100_000); i++) {
+          this.allStates.push(...layerStates.slice(i * 100_000, (i + 1) * 100_000));
+        }
+      } else {
         this.allStates.push(...layerStates);
       }
     }

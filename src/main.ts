@@ -12,6 +12,9 @@ const DEFAULT_TIME_SPEED = 1;
 
 type RenderMode = 'gpu' | 'billboard';
 type PerformanceMode = 'high' | 'mid' | 'low';
+type EntityMultiplier = 1 | 2 | 3 | 5 | 10 | 30;
+
+const ENTITY_MULTIPLIER_OPTIONS: ReadonlyArray<EntityMultiplier> = [1, 2, 3, 5, 10, 30];
 
 interface PerformanceProfile {
   resolutionScale: number;
@@ -59,6 +62,7 @@ const PERFORMANCE_PROFILES: Record<PerformanceMode, PerformanceProfile> = {
 
 const PERFORMANCE_STORAGE_KEY = 'gpu-playground-performance';
 const ALIGN_WITH_GROUND_STORAGE_KEY = 'gpu-playground-align-with-ground';
+const ENTITY_MULTIPLIER_STORAGE_KEY = 'gpu-playground-entity-multiplier';
 
 const readStorageValue = (key: string): string | null => {
   try {
@@ -91,6 +95,69 @@ const readAlignWithGround = (): boolean => {
 const writePerformanceMode = (mode: PerformanceMode): void => writeStorageValue(PERFORMANCE_STORAGE_KEY, mode);
 const writeAlignWithGround = (alignWithGround: boolean): void =>
   writeStorageValue(ALIGN_WITH_GROUND_STORAGE_KEY, alignWithGround ? 'on' : 'off');
+
+const readEntityMultiplier = (): EntityMultiplier => {
+  const storedValue = readStorageValue(ENTITY_MULTIPLIER_STORAGE_KEY);
+  const parsed = Number(storedValue);
+  return ENTITY_MULTIPLIER_OPTIONS.includes(parsed as EntityMultiplier) ? parsed as EntityMultiplier : 1;
+};
+
+const writeEntityMultiplier = (multiplier: EntityMultiplier): void => {
+  writeStorageValue(ENTITY_MULTIPLIER_STORAGE_KEY, String(multiplier));
+};
+
+const normalizeLongitude = (longitude: number): number => {
+  let normalized = longitude % 360;
+  if (normalized > 180) {
+    normalized -= 360;
+  } else if (normalized < -180) {
+    normalized += 360;
+  }
+  return normalized;
+};
+
+const normalizeLatitude = (latitude: number): number => {
+  let normalized = latitude;
+  while (normalized > 90 || normalized < -90) {
+    if (normalized > 90) {
+      normalized = 180 - normalized;
+    } else if (normalized < -90) {
+      normalized = -180 - normalized;
+    }
+  }
+  return normalized;
+};
+
+const expandEntityMultiplierRecords = (
+  records: ReadonlyArray<BasePointRecord>,
+  multiplier: EntityMultiplier,
+): Array<BasePointRecord> => {
+  if (multiplier <= 1) {
+    return [...records];
+  }
+
+  const output: Array<BasePointRecord> = [];
+  const shiftStep = 360 / multiplier;
+
+  for (const record of records) {
+    for (let copyIndex = 0; copyIndex < multiplier; copyIndex += 1) {
+      const shift = shiftStep * copyIndex;
+      if (copyIndex === 0) {
+        output.push(record);
+        continue;
+      }
+
+      output.push({
+        ...record,
+        id: `${record.id}#x${multiplier}-${copyIndex}`,
+        latitude: normalizeLatitude(record.latitude + shift),
+        longitude: normalizeLongitude(record.longitude + shift),
+      });
+    }
+  }
+
+  return output;
+};
 
 const LAYERS: Array<LayerDefinition> = [
   {
@@ -200,6 +267,23 @@ const mount = async (): Promise<void> => {
   performanceSelector.value = readPerformanceMode();
   controlRow.appendChild(performanceSelector);
 
+  const entityMultiplierLabel = document.createElement('label');
+  entityMultiplierLabel.textContent = 'Entities multiplier';
+  entityMultiplierLabel.setAttribute('for', 'gpu-playground-entity-multiplier');
+  controlRow.appendChild(entityMultiplierLabel);
+
+  const entityMultiplierSelector = document.createElement('select');
+  entityMultiplierSelector.id = 'gpu-playground-entity-multiplier';
+  entityMultiplierSelector.className = 'gpu-playground-select';
+  for (const value of ENTITY_MULTIPLIER_OPTIONS) {
+    const option = document.createElement('option');
+    option.value = String(value);
+    option.textContent = `x${value}`;
+    entityMultiplierSelector.append(option);
+  }
+  entityMultiplierSelector.value = String(readEntityMultiplier());
+  controlRow.appendChild(entityMultiplierSelector);
+
   const alignWithGroundControl = document.createElement('div');
   alignWithGroundControl.style.display = 'flex';
   alignWithGroundControl.style.alignItems = 'center';
@@ -302,6 +386,7 @@ const mount = async (): Promise<void> => {
   };
 
   const sortedLayerDefinitions = [...LAYERS].sort((left, right) => left.drawOrder - right.drawOrder);
+  const baseRecords = new Map<RecordType, Array<BasePointRecord>>();
   const activeRecords = new Map<RecordType, Array<BasePointRecord>>();
 
   const getRecords = (payload: PreparedGlobePoints): Map<RecordType, Array<BasePointRecord>> => {
@@ -322,6 +407,14 @@ const mount = async (): Promise<void> => {
 
   let activePerformanceMode: PerformanceMode = readPerformanceMode();
   let activeAlignWithGround = readAlignWithGround();
+  let activeEntityMultiplier: EntityMultiplier = readEntityMultiplier();
+
+  const getExpandedRecords = (): Map<RecordType, Array<BasePointRecord>> =>
+    new Map([
+      ['aircraft', expandEntityMultiplierRecords(baseRecords.get('aircraft') ?? [], activeEntityMultiplier)],
+      ['ship', expandEntityMultiplierRecords(baseRecords.get('ship') ?? [], activeEntityMultiplier)],
+      ['earthquake', expandEntityMultiplierRecords(baseRecords.get('earthquake') ?? [], activeEntityMultiplier)],
+    ]);
 
   const createGpuLayers = (profile: PerformanceProfile): Array<GpuLayerHandle> =>
     sortedLayerDefinitions.map((definition: LayerDefinition): GpuLayerHandle => {
@@ -365,6 +458,27 @@ const mount = async (): Promise<void> => {
   viewer.scene.globe.maximumScreenSpaceError = PERFORMANCE_PROFILES[activePerformanceMode].maximumScreenSpaceError;
 
   let activeRenderMode: RenderMode = 'gpu';
+
+  const applyEntityMultiplier = (multiplier: EntityMultiplier): void => {
+    activeEntityMultiplier = multiplier;
+    writeEntityMultiplier(multiplier);
+
+    activeRecords.clear();
+    for (const [type, records] of getExpandedRecords().entries()) {
+      let tinyCounter = 0;
+      const step = 200 / records.length;
+      for (const record of records) {
+        // Reduce flickering over massive overlaps at some zoom levels
+        record.altitudeMeters ??= 0;
+        record.altitudeMeters += tinyCounter;
+        tinyCounter += step;
+      }
+      activeRecords.set(type, records);
+    }
+
+    billboardRenderer.setRecords(activeRecords);
+    applyPerformanceMode(activePerformanceMode);
+  };
 
   const applyPerformanceMode = (mode: PerformanceMode): void => {
     activePerformanceMode = mode;
@@ -423,6 +537,10 @@ const mount = async (): Promise<void> => {
     writePerformanceMode(mode);
     applyPerformanceMode(performanceSelector.value as PerformanceMode);
   });
+  entityMultiplierSelector.addEventListener('change', () => {
+    const multiplier = Number(entityMultiplierSelector.value);
+    applyEntityMultiplier(multiplier as EntityMultiplier);
+  });
   alignWithGroundSelector.addEventListener('change', () => {
     activeAlignWithGround = alignWithGroundSelector.value === 'on';
     writeAlignWithGround(activeAlignWithGround);
@@ -474,22 +592,11 @@ const mount = async (): Promise<void> => {
     }
 
     const groupedRecords = getRecords(payload);
-    activeRecords.clear();
+    baseRecords.clear();
     for (const [type, records] of groupedRecords.entries()) {
-      let tinyCounter = 0;
-      const step = 200/records.length;
-      for (const record of records) {
-        // Reduce flickering over massive overlaps at some zoom levels
-        record.altitudeMeters ??= 0;
-        record.altitudeMeters += tinyCounter;
-        tinyCounter += step;
-      }
-      activeRecords.set(type, records);
+      baseRecords.set(type, records);
     }
-
-    billboardRenderer.setRecords(groupedRecords);
-    applyPerformanceMode(activePerformanceMode);
-    setRendererMode(activeRenderMode);
+    applyEntityMultiplier(activeEntityMultiplier);
   };
 
   try {
