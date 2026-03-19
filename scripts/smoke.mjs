@@ -55,8 +55,10 @@ for (const record of payload.records) {
     continue;
   }
 
-  const headingRadians = Math.atan2(directionY, directionX) % (Math.PI * 2);
-  const normalizedHeading = headingRadians < 0 ? headingRadians + Math.PI * 2 : headingRadians;
+  const movementDirectionRadians = Math.atan2(directionY, directionX) % (Math.PI * 2);
+  const normalizedMovementDirectionRadians = movementDirectionRadians < 0
+    ? movementDirectionRadians + Math.PI * 2
+    : movementDirectionRadians;
 
   let altitudeMeters;
   if (type === 'aircraft') {
@@ -66,7 +68,7 @@ for (const record of payload.records) {
     altitudeMeters = 1_000;
   }
 
-  if (Number.isFinite(normalizedHeading) && Number.isFinite(altitudeMeters)) {
+  if (Number.isFinite(normalizedMovementDirectionRadians) && Number.isFinite(altitudeMeters)) {
     finitePoints[type] += 1;
   }
 }

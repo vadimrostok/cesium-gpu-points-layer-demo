@@ -33,14 +33,16 @@ Library consumers only deal with already prepared records:
 - `longitude: number`
 - `latitude: number`
 - `altitudeMeters?: number`
-- `headingRadians?: number`
+- `rotationRadians?: number`
+- `movementDirectionRadians?: number`
 - `speedMetersPerSecond?: number`
 
 ## Config highlights
 
 - `drawOrder` controls layer stacking because depth test is disabled for performance.
 - `rotationEnabled` toggles sprite rotation from heading.
-- `enableAnimation` toggles motion extrapolation driven by `speedMetersPerSecond` + `headingRadians`.
+- `enableAnimation` toggles motion extrapolation driven by `speedMetersPerSecond` + either
+  `movementDirectionRadians` (when provided) or `rotationRadians` (fallback).
 
 ## Rendering benchmarks
 > 34833 points: aircraft 6559, ships 28264, earthquakes 10; Images based on SVG sources.

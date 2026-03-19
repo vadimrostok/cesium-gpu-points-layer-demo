@@ -32,7 +32,7 @@ interface BillboardMotionState {
   altitudeMeters: number;
   directionX: number;
   directionY: number;
-  headingRadians: number;
+  rotationRadians: number;
   speedMetersPerSecond: number;
 }
 
@@ -134,9 +134,10 @@ export class BillboardRenderer {
     const rotationOffset = definition.rotationEnabled ? definition.headingOffsetRadians : 0;
 
     for (const record of records) {
-      const heading = isFiniteNumber(record.headingRadians) ? record.headingRadians : 0;
-      const headingNormalized = this.normalizeHeading(heading);
-      const hasHeading = isFiniteNumber(record.headingRadians);
+      const rotation = isFiniteNumber(record.rotationRadians) ? record.rotationRadians : 0;
+      const rotationNormalized = this.normalizeHeading(rotation);
+      const hasRotation = isFiniteNumber(record.rotationRadians);
+      const hasMovementDirectionRadians = isFiniteNumber(record.movementDirectionRadians);
       const altitudeMeters = isFiniteNumber(record.altitudeMeters)
         ? record.altitudeMeters
         : definition.defaultAltitudeMeters;
@@ -155,14 +156,19 @@ export class BillboardRenderer {
       const directionScale = hasExplicitDirection
         ? 1 / Math.hypot(directionRecordX, directionRecordY)
         : 0;
-      // directionX is north, directionY is east, matching GPU directionX/directionY packing.
-      const directionX = hasExplicitDirection ? directionRecordX * directionScale : hasHeading
-        ? Math.cos(headingNormalized)
+      const movementRadians = hasMovementDirectionRadians
+        ? (record.movementDirectionRadians ?? 0)
+        : rotationNormalized;
+      // directionX is east, directionY is north, matching direction vector packing convention.
+      const directionX = hasExplicitDirection ? directionRecordX * directionScale : speedMetersPerSecond > 0
+        && (hasMovementDirectionRadians || hasRotation)
+        ? Math.cos(movementRadians)
         : 0;
-      const directionY = hasExplicitDirection ? directionRecordY * directionScale : hasHeading
-        ? Math.sin(headingNormalized)
+      const directionY = hasExplicitDirection ? directionRecordY * directionScale : speedMetersPerSecond > 0
+        && (hasMovementDirectionRadians || hasRotation)
+        ? Math.sin(movementRadians)
         : 0;
-      const hasMotion = speedMetersPerSecond > 0 && (hasHeading || hasExplicitDirection);
+      const hasMotion = speedMetersPerSecond > 0 && (hasRotation || hasExplicitDirection || hasMovementDirectionRadians);
 
       const position = Cesium.Cartesian3.fromDegrees(
         record.longitude,
@@ -179,7 +185,7 @@ export class BillboardRenderer {
         // I tried disabling depth test, but it produced worse performance
         disableDepthTestDistance: 0,
         alignedAxis: Cesium.Cartesian3.ZERO,
-        rotation: definition.rotationEnabled ? heading + rotationOffset : 0,
+        rotation: definition.rotationEnabled ? rotation + rotationOffset : 0,
         scaleByDistance: new Cesium.NearFarScalar(1_150_000, 0.5, 4_333_000, 0.1),
       });
 
@@ -190,7 +196,7 @@ export class BillboardRenderer {
         altitudeMeters,
         directionX,
         directionY,
-        headingRadians: headingNormalized,
+        rotationRadians: rotationNormalized,
         speedMetersPerSecond: hasMotion ? speedMetersPerSecond : 0,
       };
       states.push(state);

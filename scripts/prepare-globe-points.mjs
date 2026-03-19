@@ -27,7 +27,7 @@ const shipAltitudeMeters = Number.parseInt(parseArg('shipAltitudeMeters', '1000'
 const earthquakeAltitudeMeters = Number.parseInt(parseArg('earthquakeAltitudeMeters', '1000'), 10);
 
 const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
-const toHeadingRadians = (direction) => {
+const toRadiansFromDirection = (direction) => {
   if (!isFiniteNumber(direction?.x) || !isFiniteNumber(direction?.y)) {
     return null;
   }
@@ -65,7 +65,8 @@ for (const record of rawPayload.records) {
     continue;
   }
 
-  const headingRadians = toHeadingRadians(record.direction);
+  const movementDirectionRadians = toRadiansFromDirection(record.direction);
+  const rotationRadians = movementDirectionRadians;
   const base = {
     id: record.id,
     longitude: record.longitude,
@@ -82,7 +83,8 @@ for (const record of rawPayload.records) {
     planes.push({
       ...base,
       altitudeMeters,
-      headingRadians: headingRadians ?? undefined,
+      rotationRadians: rotationRadians ?? undefined,
+      movementDirectionRadians: movementDirectionRadians ?? undefined,
       speedMetersPerSecond,
     });
     continue;
@@ -92,7 +94,7 @@ for (const record of rawPayload.records) {
     ships.push({
       ...base,
       altitudeMeters: shipAltitudeMeters,
-      headingRadians: headingRadians ?? undefined,
+      rotationRadians: rotationRadians ?? undefined,
     });
     continue;
   }
@@ -100,7 +102,7 @@ for (const record of rawPayload.records) {
   earthquakes.push({
     ...base,
     altitudeMeters: earthquakeAltitudeMeters,
-    headingRadians: headingRadians ?? undefined,
+    rotationRadians: rotationRadians ?? undefined,
   });
 }
 
