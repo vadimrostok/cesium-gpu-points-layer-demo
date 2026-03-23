@@ -84,7 +84,17 @@ const readPerformanceMode = (): PerformanceMode => {
   const storedValue = readStorageValue(PERFORMANCE_STORAGE_KEY);
   return storedValue === 'mid' || storedValue === 'low' || storedValue === 'high'
     ? storedValue
-    : 'high';
+    : 'mid';
+};
+
+const parsePerformanceModeFromQuery = (value: string | null): PerformanceMode | null => {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'high' || normalized === 'mid' || normalized === 'low'
+    ? normalized
+    : null;
 };
 
 const readAlignWithGround = (): boolean => {
@@ -102,8 +112,33 @@ const readEntityMultiplier = (): EntityMultiplier => {
   return ENTITY_MULTIPLIER_OPTIONS.includes(parsed as EntityMultiplier) ? parsed as EntityMultiplier : 1;
 };
 
+const parseEntityMultiplierFromQuery = (value: string | null): EntityMultiplier | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const withoutPrefix = normalized.startsWith('x') ? normalized.slice(1) : normalized;
+  const parsed = Number(withoutPrefix);
+
+  return Number.isInteger(parsed) && ENTITY_MULTIPLIER_OPTIONS.includes(parsed as EntityMultiplier)
+    ? (parsed as EntityMultiplier)
+    : null;
+};
+
 const writeEntityMultiplier = (multiplier: EntityMultiplier): void => {
   writeStorageValue(ENTITY_MULTIPLIER_STORAGE_KEY, String(multiplier));
+};
+
+const getStartupConfig = (): { performance: PerformanceMode; multiplier: EntityMultiplier } => {
+  const params = new URLSearchParams(window.location.search);
+  const parsedPerformance = parsePerformanceModeFromQuery(params.get('performance'));
+  const parsedMultiplier = parseEntityMultiplierFromQuery(params.get('multiplier'));
+
+  return {
+    performance: parsedPerformance ?? readPerformanceMode(),
+    multiplier: parsedMultiplier ?? readEntityMultiplier(),
+  };
 };
 
 const normalizeLongitude = (longitude: number): number => {
@@ -220,6 +255,8 @@ const mount = async (): Promise<void> => {
     throw new Error('Root app container is missing.');
   }
 
+  const startupConfig = getStartupConfig();
+
   const hudEl = document.createElement('div');
   hudEl.id = HUD_ID;
   hudEl.className = 'gpu-playground-hud';
@@ -264,7 +301,7 @@ const mount = async (): Promise<void> => {
   lowPerformanceOption.value = 'low';
   lowPerformanceOption.textContent = 'low';
   performanceSelector.append(highPerformanceOption, midPerformanceOption, lowPerformanceOption);
-  performanceSelector.value = readPerformanceMode();
+  performanceSelector.value = startupConfig.performance;
   controlRow.appendChild(performanceSelector);
 
   const entityMultiplierLabel = document.createElement('label');
@@ -281,7 +318,7 @@ const mount = async (): Promise<void> => {
     option.textContent = `x${value}`;
     entityMultiplierSelector.append(option);
   }
-  entityMultiplierSelector.value = String(readEntityMultiplier());
+  entityMultiplierSelector.value = String(startupConfig.multiplier);
   controlRow.appendChild(entityMultiplierSelector);
 
   const alignWithGroundControl = document.createElement('div');
@@ -405,9 +442,9 @@ const mount = async (): Promise<void> => {
   const scalePointSize = (value: number, scale: number): number =>
     Math.max(1, Math.round(value * scale));
 
-  let activePerformanceMode: PerformanceMode = readPerformanceMode();
+  let activePerformanceMode: PerformanceMode = startupConfig.performance;
   let activeAlignWithGround = readAlignWithGround();
-  let activeEntityMultiplier: EntityMultiplier = readEntityMultiplier();
+  let activeEntityMultiplier: EntityMultiplier = startupConfig.multiplier;
 
   const getExpandedRecords = (): Map<RecordType, Array<BasePointRecord>> =>
     new Map([
