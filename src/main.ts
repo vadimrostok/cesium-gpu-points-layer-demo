@@ -445,6 +445,7 @@ const mount = async (): Promise<void> => {
   let activePerformanceMode: PerformanceMode = startupConfig.performance;
   let activeAlignWithGround = readAlignWithGround();
   let activeEntityMultiplier: EntityMultiplier = startupConfig.multiplier;
+  let activeRenderMode: RenderMode = 'gpu';
 
   const getExpandedRecords = (): Map<RecordType, Array<BasePointRecord>> =>
     new Map([
@@ -494,7 +495,28 @@ const mount = async (): Promise<void> => {
   }
   viewer.scene.globe.maximumScreenSpaceError = PERFORMANCE_PROFILES[activePerformanceMode].maximumScreenSpaceError;
 
-  let activeRenderMode: RenderMode = 'gpu';
+  const updateRecordsForCurrentRenderMode = (): void => {
+    const recordMap = new Map(activeRecords);
+    if (activeRenderMode === 'billboard') {
+      billboardRenderer.setRecords(recordMap);
+    } else {
+      for (const handle of gpuLayers) {
+        const records = recordMap.get(handle.type) ?? [];
+        handle.layer.setRecords(records);
+      }
+    }
+  };
+
+  const updateStatusMessage = (mode: RenderMode = activeRenderMode): void => {
+    const totals = [
+      ['aircraft', activeRecords.get('aircraft')?.length ?? 0],
+      ['ship', activeRecords.get('ship')?.length ?? 0],
+      ['earthquake', activeRecords.get('earthquake')?.length ?? 0],
+    ];
+    const totalCount = totals.reduce((acc, [, count]) => acc + Number(count), 0);
+    const label = mode === 'billboard' ? 'Cesium Billboards' : 'GPU points';
+    statusEl.textContent = `${label}: ${totalCount} points (aircraft ${totals[0]?.[1] ?? 0}, ships ${totals[1]?.[1] ?? 0}, earthquakes ${totals[2]?.[1] ?? 0})`;
+  };
 
   const applyEntityMultiplier = (multiplier: EntityMultiplier): void => {
     activeEntityMultiplier = multiplier;
@@ -508,13 +530,13 @@ const mount = async (): Promise<void> => {
         // Reduce flickering over massive overlaps at some zoom levels
         record.altitudeMeters ??= 0;
         record.altitudeMeters += tinyCounter;
-        tinyCounter += step;
-      }
-      activeRecords.set(type, records);
+      tinyCounter += step;
+    }
+    activeRecords.set(type, records);
     }
 
-    billboardRenderer.setRecords(activeRecords);
-    applyPerformanceMode(activePerformanceMode);
+    updateRecordsForCurrentRenderMode();
+    updateStatusMessage();
   };
 
   const applyPerformanceMode = (mode: PerformanceMode): void => {
@@ -555,15 +577,10 @@ const mount = async (): Promise<void> => {
     }
     alignWithGroundControl.hidden = useBillboard;
     billboardRenderer.setVisible(useBillboard);
-
-    const totals = [
-      ['aircraft', activeRecords.get('aircraft')?.length ?? 0],
-      ['ship', activeRecords.get('ship')?.length ?? 0],
-      ['earthquake', activeRecords.get('earthquake')?.length ?? 0],
-    ];
-    const totalCount = totals.reduce((acc, [, count]) => acc + Number(count), 0);
-    const label = mode === 'billboard' ? 'Cesium Billboards' : 'GPU points';
-    statusEl.textContent = `${label}: ${totalCount} points (aircraft ${totals[0]?.[1] ?? 0}, ships ${totals[1]?.[1] ?? 0}, earthquakes ${totals[2]?.[1] ?? 0})`;
+    if (useBillboard) {
+      billboardRenderer.setRecords(activeRecords);
+    }
+    updateStatusMessage(mode);
   };
 
   modeSelector.addEventListener('change', () => {
